@@ -35,6 +35,7 @@ import it.unimi.dsi.fastutil.shorts.Short2ObjectMaps;
 import it.unimi.dsi.fastutil.shorts.Short2ObjectOpenHashMap;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import lombok.RequiredArgsConstructor;
 import org.geysermc.cumulus.form.Form;
 import org.geysermc.cumulus.form.impl.FormDefinition;
 import org.geysermc.cumulus.form.impl.FormDefinitions;
@@ -102,17 +103,27 @@ public class FormChannel implements PluginMessageChannel {
     public boolean sendForm(UUID player, Form form) {
         // Player can only open one form at a time, so we make old ones invalid
         playerRemoved(player);
-        byte[] formData = createFormData(player, form);
-        return pluginMessageUtils.sendMessage(player, getIdentifier(), formData);
+        FormData formData = createFormData(form);
+        if (pluginMessageUtils.sendMessage(player, getIdentifier(), formData.data)) {
+            short formId = formData.id;
+            uuidForms.put(player, formId);
+            storedForms.put(formId, form);
+            return true;
+        }
+        return false;
     }
 
-    public byte[] createFormData(UUID player, Form form) {
+    @RequiredArgsConstructor
+    public static class FormData {
+        public final short id;
+        public final byte[] data;
+    }
+
+    public FormData createFormData(Form form) {
         short formId = getNextFormId();
         if (config.isProxy()) {
             formId |= 0x8000;
         }
-        uuidForms.put(player, formId);
-        storedForms.put(formId, form);
 
         FormDefinition<Form, ?, ?> definition = formDefinitions.definitionFor(form);
 
@@ -126,7 +137,7 @@ public class FormChannel implements PluginMessageChannel {
         data[1] = (byte) (formId >> 8 & 0xFF);
         data[2] = (byte) (formId & 0xFF);
         System.arraycopy(jsonData, 0, data, 3, jsonData.length);
-        return data;
+        return new FormData(formId, data);
     }
 
     protected boolean callResponseConsumer(byte[] data) {
