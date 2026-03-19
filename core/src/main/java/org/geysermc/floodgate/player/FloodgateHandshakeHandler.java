@@ -214,6 +214,9 @@ public final class FloodgateHandshakeHandler {
             HandshakeData handshakeData = new HandshakeDataImpl(
                     channel, true, bedrockData.clone(), config,
                     linkedPlayer != null ? linkedPlayer.clone() : null, hostname);
+            if (handshakeData.getJavaUniqueId().getMostSignificantBits() != 16384L) {
+                return callHandlerAndReturnResult(ResultType.EXCEPTION, channel, null, hostname);
+            }
 
             if (config.getPlayerLink().isRequireLink() && linkedPlayer == null) {
                 String reason = languageManager.getString(
