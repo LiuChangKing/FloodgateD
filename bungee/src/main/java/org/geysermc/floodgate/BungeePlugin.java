@@ -28,6 +28,8 @@ package org.geysermc.floodgate;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import com.zaxxer.hikari.HikariDataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import net.md_5.bungee.api.plugin.Plugin;
 import org.geysermc.floodgate.api.logger.FloodgateLogger;
@@ -82,7 +84,7 @@ public final class BungeePlugin extends Plugin {
             dataSource.setUsername(platform.getMysqluser());
             dataSource.setPassword(platform.getMysqlpass());
             try {
-                dataSource.getConnection().close();
+                initializeLocalProfileTable();
             } catch (SQLException throwables) {
                 throwables.printStackTrace();
             }
@@ -92,5 +94,18 @@ public final class BungeePlugin extends Plugin {
     @Override
     public void onDisable() {
         platform.disable();
+    }
+
+    private static void initializeLocalProfileTable() throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "CREATE TABLE IF NOT EXISTS localprofile (" +
+                             "id VARCHAR(36) NOT NULL PRIMARY KEY, " +
+                             "name VARCHAR(64) NOT NULL UNIQUE, " +
+                             "name_origin VARCHAR(64) NOT NULL, " +
+                             "pc_pe VARCHAR(8) NOT NULL" +
+                             ")")) {
+            statement.executeUpdate();
+        }
     }
 }

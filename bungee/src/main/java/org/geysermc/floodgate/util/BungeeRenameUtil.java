@@ -87,10 +87,17 @@ public class BungeeRenameUtil {
                     sql.executeUpdate();
                     return mod;
                 } catch (SQLException e) {
-                    ++count;
-                    int usernameLength = Math.min(nameBp.length(), 16 - 3);
-                    String relName = nameBp.substring(0, usernameLength);
-                    mod = relName + ("_" + count);
+                    String msg = e.getMessage();
+                    if (isDuplicateKey(msg) && msg.contains("PRIMARY")) {
+                        return name;
+                    } else if (isDuplicateKey(msg) && isNameKey(msg)) {
+                        ++count;
+                        int usernameLength = Math.min(nameBp.length(), 16 - 3);
+                        String relName = nameBp.substring(0, usernameLength);
+                        mod = relName + ("_" + count);
+                    } else {
+                        throw e;
+                    }
                 }
             } finally {
                 if (Collections.singletonList(sql).get(0) != null) {
@@ -98,5 +105,13 @@ public class BungeeRenameUtil {
                 }
             }
         }
+    }
+
+    private static boolean isDuplicateKey(String msg) {
+        return msg != null && msg.contains("Duplicate entry");
+    }
+
+    private static boolean isNameKey(String msg) {
+        return msg.contains("'name'") || msg.contains("localprofile.name");
     }
 }

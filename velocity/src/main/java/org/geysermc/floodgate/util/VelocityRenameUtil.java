@@ -70,10 +70,10 @@ public class VelocityRenameUtil {
                 return mod;
             } catch (SQLException e) {
                 String msg = e.getMessage();
-                if (msg.contains("Duplicate entry") && msg.contains("PRIMARY")) {
+                if (isDuplicateKey(msg) && msg.contains("PRIMARY")) {
                     // UUID（id）已经存在，说明已有记录，直接返回原始名称即可
                     return name;
-                } else if (msg.contains("Duplicate entry") && msg.contains("'name'")) {
+                } else if (isDuplicateKey(msg) && isNameKey(msg)) {
                     // 名字冲突，尝试新的名字
                     ++count;
                     int usernameLength = Math.min(name.length(), 13); // 确保不超过16个字符
@@ -86,5 +86,13 @@ public class VelocityRenameUtil {
                 }
             }
         }
+    }
+
+    private static boolean isDuplicateKey(String msg) {
+        return msg != null && msg.contains("Duplicate entry");
+    }
+
+    private static boolean isNameKey(String msg) {
+        return msg.contains("'name'") || msg.contains("localprofile.name");
     }
 }

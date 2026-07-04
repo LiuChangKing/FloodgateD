@@ -31,6 +31,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.inject.Inject;
+import java.lang.reflect.Method;
 import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
@@ -79,11 +80,17 @@ public class SimpleFloodgateApi implements FloodgateApi {
 
     @Override
     public boolean isFloodgatePlayer(UUID uuid) {
+        if (isNeteaseBindBridgeBoundJavaSession(uuid)) {
+            return false;
+        }
         return getPlayer(uuid) != null || uuid.toString().contains("00000000-0000-4000-8000");
     }
 
     @Override
     public FloodgatePlayer getPlayer(UUID uuid) {
+        if (isNeteaseBindBridgeBoundJavaSession(uuid)) {
+            return null;
+        }
         FloodgatePlayer selfPlayer = players.get(uuid);
         if (selfPlayer != null) {
             return selfPlayer;
@@ -103,6 +110,17 @@ public class SimpleFloodgateApi implements FloodgateApi {
         }
         // and don't forget the pending remove linked players
         return getPendingRemovePlayer(uuid);
+    }
+
+    private boolean isNeteaseBindBridgeBoundJavaSession(UUID uuid) {
+        try {
+            Class<?> bridgeClass = Class.forName("com.netease.bindbridge.BindBridgePlugin");
+            Method method = bridgeClass.getMethod("isBoundJavaSession", UUID.class);
+            Object result = method.invoke(null, uuid);
+            return result instanceof Boolean && (Boolean) result;
+        } catch (ReflectiveOperationException | LinkageError ignored) {
+            return false;
+        }
     }
 
     @Override

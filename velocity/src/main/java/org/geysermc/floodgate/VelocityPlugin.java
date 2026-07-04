@@ -33,6 +33,8 @@ import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.zaxxer.hikari.HikariDataSource;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import org.geysermc.floodgate.api.logger.FloodgateLogger;
 import org.geysermc.floodgate.module.CommandModule;
@@ -86,7 +88,7 @@ public final class VelocityPlugin {
             dataSource.setUsername(platform.getMysqluser());
             dataSource.setPassword(platform.getMysqlpass());
             try {
-                dataSource.getConnection().close();
+                initializeLocalProfileTable();
             } catch (SQLException throwables) {
                 throwables.printStackTrace();
             }
@@ -96,5 +98,18 @@ public final class VelocityPlugin {
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
         platform.disable();
+    }
+
+    private static void initializeLocalProfileTable() throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "CREATE TABLE IF NOT EXISTS localprofile (" +
+                             "id VARCHAR(36) NOT NULL PRIMARY KEY, " +
+                             "name VARCHAR(64) NOT NULL UNIQUE, " +
+                             "name_origin VARCHAR(64) NOT NULL, " +
+                             "pc_pe VARCHAR(8) NOT NULL" +
+                             ")")) {
+            statement.executeUpdate();
+        }
     }
 }
