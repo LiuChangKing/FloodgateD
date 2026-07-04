@@ -31,7 +31,6 @@ import com.google.common.collect.ImmutableSet;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.inject.Inject;
-import java.lang.reflect.Method;
 import java.util.Collection;
 import java.util.Map;
 import java.util.UUID;
@@ -41,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 import org.geysermc.cumulus.form.Form;
 import org.geysermc.cumulus.form.util.FormBuilder;
 import org.geysermc.floodgate.api.logger.FloodgateLogger;
+import org.geysermc.floodgate.api.netease.NeteaseAccountBridge;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
 import org.geysermc.floodgate.api.unsafe.Unsafe;
 import org.geysermc.floodgate.config.FloodgateConfig;
@@ -113,14 +113,7 @@ public class SimpleFloodgateApi implements FloodgateApi {
     }
 
     private boolean isNeteaseBindBridgeBoundJavaSession(UUID uuid) {
-        try {
-            Class<?> bridgeClass = Class.forName("com.netease.bindbridge.BindBridgePlugin");
-            Method method = bridgeClass.getMethod("isBoundJavaSession", UUID.class);
-            Object result = method.invoke(null, uuid);
-            return result instanceof Boolean && (Boolean) result;
-        } catch (ReflectiveOperationException | LinkageError ignored) {
-            return false;
-        }
+        return NeteaseAccountBridge.getInstance().isBoundJavaEntry(uuid);
     }
 
     @Override

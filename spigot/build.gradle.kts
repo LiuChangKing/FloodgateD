@@ -24,6 +24,11 @@ dependencies {
             attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17)
         }
     }
+
+    val dreamEngineJar = rootProject.file("../DreamVIP/libs/DreamEngine-1.0-SNAPSHOT.jar")
+    if (dreamEngineJar.exists()) {
+        compileOnly(files(dreamEngineJar))
+    }
 }
 
 relocate("com.google.inject")
