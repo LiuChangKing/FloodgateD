@@ -39,17 +39,21 @@ final class NeteaseBindDreamEngineUi {
                         "点击后生成一枚临时验证码",
                         "让基岩账号输入 Java 名和验证码完成绑定"
                 ), ACTION_GENERATE)
-                .buttonAt(13, Material.COMPASS, "查看绑定状态", ACTION_STATUS)
+                .buttonAt(13, Material.COMPASS, "查看绑定状态", Arrays.asList(
+                        "查询当前账号的入口类型",
+                        "以及是否已经完成互通绑定"
+                ), ACTION_STATUS)
                 .buttonAt(15, Material.BARRIER, "解除账号绑定", Arrays.asList(
                         "解除后 Java 入口账号需要重新绑定",
                         "点击后进入二次确认页面"
                 ), ACTION_UNBIND_PAGE)
                 .onClick(event -> {
                     if (ACTION_GENERATE.equals(event.getPayload())) {
-                        bridge.forwardBindCommand(event.getPlayer(), new String[0]);
+                        bridge.forwardBindCommand(event.getPlayer(), new String[0], "正在生成绑定验证码...");
                     } else if (ACTION_STATUS.equals(event.getPayload())) {
-                        bridge.forwardBindCommand(event.getPlayer(), new String[]{"status"});
+                        bridge.forwardBindCommand(event.getPlayer(), new String[]{"status"}, "正在查询账号互通状态...");
                     } else if (ACTION_UNBIND_PAGE.equals(event.getPayload())) {
+                        event.getPlayer().sendMessage("请在确认页面中再次点击确认解除绑定");
                         openUnbindConfirm(event.getPlayer());
                     }
                 });
@@ -67,8 +71,9 @@ final class NeteaseBindDreamEngineUi {
                     if (ACTION_BIND_FORM.equals(event.getPayload())) {
                         openBedrockConfirmBindForm(event.getPlayer());
                     } else if (ACTION_STATUS.equals(event.getPayload())) {
-                        bridge.forwardBindCommand(event.getPlayer(), new String[]{"status"});
+                        bridge.forwardBindCommand(event.getPlayer(), new String[]{"status"}, "正在查询账号互通状态...");
                     } else if (ACTION_UNBIND_PAGE.equals(event.getPayload())) {
+                        event.getPlayer().sendMessage("请在确认页面中再次点击确认解除绑定");
                         openUnbindConfirm(event.getPlayer());
                     }
                 });
@@ -88,7 +93,7 @@ final class NeteaseBindDreamEngineUi {
                         player.sendMessage("Java 玩家名和验证码不能为空");
                         return;
                     }
-                    bridge.forwardBindCommand(player, new String[]{javaName[0], code[0]});
+                    bridge.forwardBindCommand(player, new String[]{javaName[0], code[0]}, "已提交绑定信息，正在校验...");
                 }))
                 .open(player);
     }
@@ -103,7 +108,7 @@ final class NeteaseBindDreamEngineUi {
                 .buttonAt(15, Material.ARROW, "返回", ACTION_BACK)
                 .onClick(event -> {
                     if (ACTION_UNBIND_CONFIRM.equals(event.getPayload())) {
-                        bridge.forwardBindCommand(event.getPlayer(), new String[]{"unbind", "confirm"});
+                        bridge.forwardBindCommand(event.getPlayer(), new String[]{"unbind", "confirm"}, "已提交解绑请求，正在处理...");
                     } else if (ACTION_BACK.equals(event.getPayload())) {
                         open(event.getPlayer());
                     }

@@ -6,6 +6,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.Collections;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -14,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.PluginCommand;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -53,9 +55,17 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
         plugin.getServer().getServicesManager().register(NeteaseAccountApi.class, this, plugin, ServicePriority.Normal);
         NeteaseAccountBridge.setInstance(this);
 
-        if (plugin.getCommand(config.commandName()) != null) {
-            plugin.getCommand(config.commandName()).setExecutor(this);
-            plugin.getCommand(config.commandName()).setTabCompleter(this);
+        PluginCommand command = plugin.getCommand(config.commandName());
+        if (command == null && !"neteasebind".equalsIgnoreCase(config.commandName())) {
+            plugin.getLogger().warning("Command '" + config.commandName()
+                    + "' is not declared in plugin.yml; falling back to /neteasebind");
+            command = plugin.getCommand("neteasebind");
+        }
+        if (command != null) {
+            command.setExecutor(this);
+            command.setTabCompleter(this);
+        } else {
+            plugin.getLogger().warning("Netease bind command is unavailable because plugin.yml has no command entry");
         }
         plugin.getLogger().info("Netease bind companion enabled");
     }
@@ -90,12 +100,37 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
-            return java.util.Arrays.asList("status", "unbind", "ui");
+            List<String> candidates = new ArrayList<>();
+            candidates.add("status");
+            candidates.add("unbind");
+            candidates.add("ui");
+            if (sender instanceof Player) {
+                for (Player player : plugin.getServer().getOnlinePlayers()) {
+                    if (!player.getName().equalsIgnoreCase(sender.getName())) {
+                        candidates.add(player.getName());
+                    }
+                }
+            }
+            return filterPrefix(candidates, args[0]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("unbind")) {
-            return Collections.singletonList("confirm");
+            return filterPrefix(Collections.singletonList("confirm"), args[1]);
         }
         return Collections.emptyList();
+    }
+
+    private List<String> filterPrefix(List<String> candidates, String prefix) {
+        if (prefix == null || prefix.isEmpty()) {
+            return candidates;
+        }
+        String lowerPrefix = prefix.toLowerCase(java.util.Locale.ROOT);
+        List<String> result = new ArrayList<>();
+        for (String candidate : candidates) {
+            if (candidate.toLowerCase(java.util.Locale.ROOT).startsWith(lowerPrefix)) {
+                result.add(candidate);
+            }
+        }
+        return result;
     }
 
     private void openBindUiOrFallback(Player player) {
@@ -119,6 +154,10 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
     }
 
     void forwardBindCommand(Player player, String[] args) {
+        forwardBindCommand(player, args, null);
+    }
+
+    void forwardBindCommand(Player player, String[] args, String feedbackMessage) {
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             try (DataOutputStream output = new DataOutputStream(bytes)) {
@@ -129,6 +168,9 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
                 }
             }
             player.sendPluginMessage(plugin, BridgeChannel.ID, bytes.toByteArray());
+            if (feedbackMessage != null && !feedbackMessage.isEmpty()) {
+                player.sendMessage(feedbackMessage);
+            }
         } catch (IOException exception) {
             player.sendMessage("绑定命令转发失败，请联系管理员");
             plugin.getLogger().warning("Failed to forward Netease bind command: " + exception.getMessage());
