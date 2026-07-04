@@ -11,7 +11,7 @@ tasks {
         from(project.rootProject.file("LICENSE"))
     }
     val shadowJar = named<ShadowJar>("shadowJar") {
-        archiveBaseName.set("floodgate-${project.name}")
+        archiveBaseName.set("floodgate-${project.name}-mxzc163")
         archiveVersion.set("")
         archiveClassifier.set("")
 
