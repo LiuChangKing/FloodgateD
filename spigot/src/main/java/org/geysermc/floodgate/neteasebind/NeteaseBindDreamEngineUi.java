@@ -4,7 +4,6 @@ import com.liuchangking.dreamengine.api.CrossPlatformMenu;
 import com.liuchangking.dreamengine.api.CrossUI;
 import com.liuchangking.dreamengine.api.PlatformAPI;
 import com.liuchangking.dreamengine.ui.ElementsForm;
-import java.util.Arrays;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -35,15 +34,15 @@ final class NeteaseBindDreamEngineUi {
         CrossPlatformMenu<String> menu = CrossUI.stringMenu(player)
                 .title("账号管理")
                 .content("生成验证码后，请使用你的网易基岩账号确认绑定。\n如果已经完成绑定，可以在这里解除绑定。")
-                .buttonAt(11, Material.PAPER, "生成绑定验证码", Arrays.asList(
+                .buttonAt(11, Material.PAPER, "生成绑定验证码", lore(
                         "点击后生成一枚临时验证码",
                         "让基岩账号输入 Java 名和验证码完成绑定"
                 ), ACTION_GENERATE)
-                .buttonAt(13, Material.COMPASS, "查看绑定状态", Arrays.asList(
+                .buttonAt(13, Material.COMPASS, "查看绑定状态", lore(
                         "查询当前账号的入口类型",
                         "以及是否已经完成互通绑定"
                 ), ACTION_STATUS)
-                .buttonAt(15, Material.BARRIER, "解除账号绑定", Arrays.asList(
+                .buttonAt(15, Material.BARRIER, "解除账号绑定", lore(
                         "解除后 Java 入口账号需要重新绑定",
                         "点击后进入二次确认页面"
                 ), ACTION_UNBIND_PAGE)
@@ -102,7 +101,7 @@ final class NeteaseBindDreamEngineUi {
         CrossPlatformMenu<String> menu = CrossUI.stringMenu(player)
                 .title("解除绑定")
                 .content("解除绑定后，Java 入口账号将不再使用当前基岩身份进入服务器。\n如果你是绑定后的 Java 玩家，确认后会被踢出并需要重新进入。")
-                .buttonAt(11, Material.REDSTONE_BLOCK, "确认解除绑定", Arrays.asList(
+                .buttonAt(11, Material.REDSTONE_BLOCK, "确认解除绑定", lore(
                         "此操作会删除 Java 与基岩账号的绑定关系"
                 ), ACTION_UNBIND_CONFIRM)
                 .buttonAt(15, Material.ARROW, "返回", ACTION_BACK)
@@ -112,7 +111,15 @@ final class NeteaseBindDreamEngineUi {
                     } else if (ACTION_BACK.equals(event.getPayload())) {
                         open(event.getPlayer());
                     }
-                });
+        });
         menu.open(player);
+    }
+
+    private static java.util.List<String> lore(String... lines) {
+        java.util.List<String> result = new java.util.ArrayList<>();
+        for (String line : lines) {
+            result.add("&7" + line);
+        }
+        return result;
     }
 }
