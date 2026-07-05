@@ -31,6 +31,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.sql.SQLIntegrityConstraintViolationException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +59,10 @@ import org.geysermc.floodgate.api.player.FloodgatePlayer;
 
 public final class NeteaseBindVelocityService implements NeteaseAccountApi {
     private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.legacyAmpersand();
+    private static final String SUCCESS_PREFIX = "&8[&a&l!&8] &a";
+    private static final String WARNING_PREFIX = "&8[&e&l!&8] &e";
+    private static final String ERROR_PREFIX = "&8[&c&l!&8] &c";
+    private static final String CODE_PATTERN = "\\d{6}";
     private final ProxyServer proxy;
     private final ProxyFloodgateApi floodgateApi;
     private final FloodgateLogger logger;
@@ -68,6 +73,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
     private final Map<UUID, Boolean> unboundJavaSessions = new ConcurrentHashMap<>();
     private final Map<UUID, Component> deniedJavaLogins = new ConcurrentHashMap<>();
     private final ExecutorService loginExecutor = Executors.newFixedThreadPool(4, new NamedThreadFactory("NeteaseBind-Login-"));
+    private final ExecutorService commandExecutor = Executors.newFixedThreadPool(2, new NamedThreadFactory("NeteaseBind-Command-"));
     private final ScheduledExecutorService timeoutExecutor = Executors.newSingleThreadScheduledExecutor(
             new NamedThreadFactory("NeteaseBind-Timeout-"));
     private volatile BindingRepository repository;
@@ -383,10 +389,14 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
         NeteaseAccountBridge.clearInstance(this);
         proxy.getChannelRegistrar().unregister(bridgeChannel);
         loginExecutor.shutdown();
+        commandExecutor.shutdown();
         timeoutExecutor.shutdown();
         try {
             if (!loginExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
                 loginExecutor.shutdownNow();
+            }
+            if (!commandExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
+                commandExecutor.shutdownNow();
             }
             if (!timeoutExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
                 timeoutExecutor.shutdownNow();
@@ -394,6 +404,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             loginExecutor.shutdownNow();
+            commandExecutor.shutdownNow();
             timeoutExecutor.shutdownNow();
         }
         boundJavaByBedrockUuid.clear();
@@ -429,9 +440,18 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
     }
 
     private void handleCommand(Player player, String[] args) {
+        try {
+            commandExecutor.execute(() -> handleCommandNow(player, args));
+        } catch (RejectedExecutionException exception) {
+            player.sendMessage(error("账号互通服务繁忙，请稍后重试"));
+            logger.warn("Netease bind command executor rejected {}", player.getUsername());
+        }
+    }
+
+    private void handleCommandNow(Player player, String[] args) {
         BindingRepository repository = getRepository();
         if (repository == null) {
-            player.sendMessage(Component.text("账号互通服务尚未连接到 Floodgate 数据库，请稍后再试"));
+            player.sendMessage(error("账号互通服务尚未连接到 Floodgate 数据库，请稍后再试"));
             return;
         }
 
@@ -445,13 +465,16 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             } else if (args.length == 2) {
                 confirmBedrockBind(player, args[0], args[1], repository);
             } else {
-                player.sendMessage(Component.text("用法: /" + config.commandName() + " 或 /"
+                player.sendMessage(warning("用法: /" + config.commandName() + " 或 /"
                         + config.commandName() + " <Java玩家名> <验证码> 或 /"
                         + config.commandName() + " unbind confirm"));
             }
         } catch (SQLException exception) {
-            player.sendMessage(Component.text("账号互通服务数据库错误，请联系管理员"));
+            player.sendMessage(error("账号互通服务数据库错误，请联系管理员"));
             logger.error("Netease bind command failed", exception);
+        } catch (RuntimeException exception) {
+            player.sendMessage(error("账号互通命令处理失败，请联系管理员"));
+            logger.error("Unexpected Netease bind command error", exception);
         }
     }
 
@@ -459,13 +482,13 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
         UUID uuid = player.getUniqueId();
         Optional<Binding> boundBedrock = repository.findBindingByBedrockUuid(uuid);
         if (boundJavaByBedrockUuid.containsKey(uuid) || boundBedrock.isPresent()) {
-            player.sendMessage(Component.text("当前账号已经完成绑定"));
-            player.sendMessage(Component.text("输入 /" + config.commandName() + " status 查看绑定状态"));
-            player.sendMessage(Component.text("输入 /" + config.commandName() + " unbind confirm 解除绑定"));
+            player.sendMessage(warning("当前账号已经完成绑定"));
+            player.sendMessage(warning("输入 /" + config.commandName() + " status 查看绑定状态"));
+            player.sendMessage(warning("输入 /" + config.commandName() + " unbind confirm 解除绑定"));
             return;
         }
         if (repository.findLocalProfile(uuid, "pe").isPresent()) {
-            player.sendMessage(Component.text("请让 Java 玩家执行 /" + config.commandName() + " 发起绑定"));
+            player.sendMessage(warning("请让 Java 玩家执行 /" + config.commandName() + " 发起绑定"));
             return;
         }
         if (repository.isJavaBound(uuid)) {
@@ -475,8 +498,8 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
 
         repository.ensureLocalProfile(uuid, player.getUsername(), "pc");
         PendingBind pending = pendingBinds.create(uuid, player.getUsername());
-        player.sendMessage(Component.text("你的绑定验证码是: " + pending.code()));
-        player.sendMessage(Component.text("请让要绑定的基岩玩家在游戏内输入 /"
+        player.sendMessage(success("你的绑定验证码是: " + pending.code()));
+        player.sendMessage(success("请让要绑定的基岩玩家在游戏内输入 /"
                 + config.commandName() + " " + player.getUsername() + " " + pending.code()));
     }
 
@@ -485,7 +508,11 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
         UUID bedrockUuid = player.getUniqueId();
         Optional<LocalProfile> bedrockProfile = repository.findLocalProfile(bedrockUuid, "pe");
         if (!bedrockProfile.isPresent()) {
-            player.sendMessage(Component.text("只有基岩玩家可以输入验证码完成绑定"));
+            player.sendMessage(warning("只有基岩玩家可以输入验证码完成绑定"));
+            return;
+        }
+        if (!code.matches(CODE_PATTERN)) {
+            player.sendMessage(warning("验证码格式不正确，请输入 6 位数字验证码"));
             return;
         }
         if (repository.isBedrockBound(bedrockUuid)) {
@@ -495,13 +522,13 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
 
         Optional<PendingBind> pendingOptional = pendingBinds.peek(code);
         if (!pendingOptional.isPresent()) {
-            player.sendMessage(Component.text("验证码不存在或已过期"));
+            player.sendMessage(warning("验证码不存在或已过期"));
             return;
         }
 
         PendingBind pending = pendingOptional.get();
         if (!pending.javaName().equalsIgnoreCase(javaName)) {
-            player.sendMessage(Component.text("Java 玩家名与验证码不匹配"));
+            player.sendMessage(warning("Java 玩家名与验证码不匹配"));
             return;
         }
         if (repository.isJavaBound(pending.javaUuid())) {
@@ -509,9 +536,18 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             return;
         }
 
-        pendingBinds.consume(code);
-        repository.createBinding(pending.javaUuid(), bedrockUuid);
-        player.sendMessage(Component.text("绑定成功: " + pending.javaName() + " -> " + bedrockProfile.get().displayName()));
+        Optional<PendingBind> consumed = pendingBinds.consume(code);
+        if (!consumed.isPresent()) {
+            player.sendMessage(warning("验证码已被使用或已过期，请重新生成"));
+            return;
+        }
+        try {
+            repository.createBinding(consumed.get().javaUuid(), bedrockUuid);
+        } catch (SQLIntegrityConstraintViolationException exception) {
+            player.sendMessage(warning("绑定关系已经存在，请输入 /" + config.commandName() + " status 查看状态"));
+            return;
+        }
+        player.sendMessage(success("绑定成功: " + consumed.get().javaName() + " -> " + bedrockProfile.get().displayName()));
         proxy.getPlayer(pending.javaUuid()).ifPresent(javaPlayer ->
                 javaPlayer.disconnect(message(config.kickAfterBindMessage())));
     }
@@ -521,12 +557,12 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
         Optional<LocalProfile> peProfile = repository.findLocalProfile(uuid, "pe");
         Optional<Binding> bedrockBinding = repository.findBindingByBedrockUuid(uuid);
         if (peProfile.isPresent()) {
-            player.sendMessage(Component.text("当前身份: 基岩玩家 " + peProfile.get().displayName()));
-            player.sendMessage(Component.text(bedrockBinding.isPresent()
-                    ? "绑定状态: 已被 Java 账号绑定"
-                    : "绑定状态: 未被 Java 账号绑定"));
+            player.sendMessage(success("当前身份: 基岩玩家 " + peProfile.get().displayName()));
+            player.sendMessage((bedrockBinding.isPresent() ? success(
+                    "绑定状态: 已被 Java 账号绑定") : warning(
+                    "绑定状态: 未被 Java 账号绑定")));
             if (bedrockBinding.isPresent()) {
-                player.sendMessage(Component.text("绑定 Java UUID: " + bedrockBinding.get().javaUuid()));
+                player.sendMessage(success("绑定 Java UUID: " + bedrockBinding.get().javaUuid()));
             }
             return;
         }
@@ -535,17 +571,17 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
         if (!binding.isPresent()) {
             UUID javaUuid = boundJavaByBedrockUuid.get(uuid);
             if (javaUuid != null) {
-                player.sendMessage(Component.text("当前身份: 已绑定 Java 玩家，正在使用基岩 UUID 登录"));
-                player.sendMessage(Component.text("绑定 Java UUID: " + javaUuid));
-                player.sendMessage(Component.text("当前基岩 UUID: " + uuid));
+                player.sendMessage(success("当前身份: 已绑定 Java 玩家，正在使用基岩 UUID 登录"));
+                player.sendMessage(success("绑定 Java UUID: " + javaUuid));
+                player.sendMessage(success("当前基岩 UUID: " + uuid));
                 return;
             }
-            player.sendMessage(Component.text("当前身份: Java 玩家，未绑定基岩账号"));
+            player.sendMessage(warning("当前身份: Java 玩家，未绑定基岩账号"));
             return;
         }
 
         Optional<LocalProfile> boundProfile = repository.findLocalProfile(binding.get().bedrockUuid(), "pe");
-        player.sendMessage(Component.text("当前身份: Java 玩家，已绑定 "
+        player.sendMessage(success("当前身份: Java 玩家，已绑定 "
                 + (boundProfile.isPresent() ? boundProfile.get().displayName() : binding.get().bedrockUuid().toString())));
     }
 
@@ -560,7 +596,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             binding = repository.findBindingByJavaUuid(uuid);
         }
         if (!binding.isPresent()) {
-            player.sendMessage(Component.text("当前账号没有可解除的绑定关系"));
+            player.sendMessage(warning("当前账号没有可解除的绑定关系"));
             return;
         }
 
@@ -570,24 +606,23 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
         boundJavaByBedrockUuid.remove(removed.bedrockUuid());
         pendingBinds.removeByJavaUuid(removed.javaUuid());
         if (!deleted) {
-            player.sendMessage(Component.text("绑定关系已经不存在"));
+            player.sendMessage(warning("绑定关系已经不存在"));
             return;
         }
 
-        player.sendMessage(Component.text("已解除 Java UUID " + removed.javaUuid() + " 与当前基岩账号的绑定"));
+        player.sendMessage(success("已解除 Java UUID " + removed.javaUuid() + " 与当前基岩账号的绑定"));
         proxy.getPlayer(removed.bedrockUuid()).ifPresent(javaPlayer -> {
             if (boundJavaOnline) {
-                javaPlayer.disconnect(Component.text("解绑完成，请重新进入服务器"));
+                javaPlayer.disconnect(warning("解绑完成，请重新进入服务器"));
             }
         });
     }
-
     private final class BindCommand implements SimpleCommand {
         @Override
         public void execute(Invocation invocation) {
             CommandSource source = invocation.source();
             if (!(source instanceof Player)) {
-                source.sendMessage(Component.text("这个命令只能由玩家执行"));
+                source.sendMessage(error("这个命令只能由玩家执行"));
                 return;
             }
             handleCommand((Player) source, invocation.arguments());
@@ -607,6 +642,18 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
 
     private static Component message(String text) {
         return LEGACY.deserialize(text == null ? "" : text);
+    }
+
+    private static Component success(String text) {
+        return message(SUCCESS_PREFIX + text);
+    }
+
+    private static Component warning(String text) {
+        return message(WARNING_PREFIX + text);
+    }
+
+    private static Component error(String text) {
+        return message(ERROR_PREFIX + text);
     }
 
     private static final class LoginCheck {

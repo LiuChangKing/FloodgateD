@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -31,6 +32,10 @@ import org.geysermc.floodgate.api.netease.NeteaseAccountBridge;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
 
 public final class NeteaseBindSpigotBridge implements Listener, PluginMessageListener, CommandExecutor, TabCompleter, NeteaseAccountApi {
+    private static final String SUCCESS_PREFIX = "&8[&a&l!&8] &a";
+    private static final String WARNING_PREFIX = "&8[&e&l!&8] &e";
+    private static final String ERROR_PREFIX = "&8[&c&l!&8] &c";
+
     private final SpigotPlugin plugin;
     private final NeteaseBindConfig config;
     private final Map<UUID, EntryType> entryTypes = new ConcurrentHashMap<>();
@@ -84,7 +89,7 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player)) {
-            sender.sendMessage("这个命令只能由玩家执行");
+            sender.sendMessage(error("这个命令只能由玩家执行"));
             return true;
         }
 
@@ -145,14 +150,14 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
             }
             return;
         }
-        player.sendMessage("当前子服未安装 DreamEngine，无法打开绑定界面");
+        player.sendMessage(warning("当前子服未安装 DreamEngine，无法打开绑定界面"));
         sendFallbackUsage(player);
     }
 
     private void sendFallbackUsage(Player player) {
-        player.sendMessage("Java 玩家请输入 /" + config.commandName() + " 获取验证码");
-        player.sendMessage("基岩玩家请输入 /" + config.commandName() + " <Java玩家名> <验证码> 完成绑定");
-        player.sendMessage("已绑定玩家请输入 /" + config.commandName() + " unbind confirm 解除绑定");
+        player.sendMessage(warning("Java 玩家请输入 /" + config.commandName() + " 获取验证码"));
+        player.sendMessage(warning("基岩玩家请输入 /" + config.commandName() + " <Java玩家名> <验证码> 完成绑定"));
+        player.sendMessage(warning("已绑定玩家请输入 /" + config.commandName() + " unbind confirm 解除绑定"));
     }
 
     void forwardBindCommand(Player player, String[] args) {
@@ -171,12 +176,28 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
             }
             player.sendPluginMessage(plugin, BridgeChannel.ID, bytes.toByteArray());
             if (feedbackMessage != null && !feedbackMessage.isEmpty()) {
-                player.sendMessage(feedbackMessage);
+                player.sendMessage(success(feedbackMessage));
             }
         } catch (IOException exception) {
-            player.sendMessage("绑定命令转发失败，请联系管理员");
+            player.sendMessage(error("绑定命令转发失败，请联系管理员"));
             plugin.getLogger().warning("Failed to forward Netease bind command: " + exception.getMessage());
         }
+    }
+
+    String success(String text) {
+        return color(SUCCESS_PREFIX + text);
+    }
+
+    String warning(String text) {
+        return color(WARNING_PREFIX + text);
+    }
+
+    String error(String text) {
+        return color(ERROR_PREFIX + text);
+    }
+
+    private static String color(String text) {
+        return ChatColor.translateAlternateColorCodes('&', text == null ? "" : text);
     }
 
     @Override

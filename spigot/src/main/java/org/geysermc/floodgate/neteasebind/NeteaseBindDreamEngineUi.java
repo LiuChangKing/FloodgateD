@@ -15,6 +15,7 @@ final class NeteaseBindDreamEngineUi {
     private static final String ACTION_UNBIND_PAGE = "unbind_page";
     private static final String ACTION_UNBIND_CONFIRM = "unbind_confirm";
     private static final String ACTION_BACK = "back";
+    private static final String CODE_PATTERN = "\\d{6}";
 
     private final NeteaseBindSpigotBridge bridge;
 
@@ -52,7 +53,7 @@ final class NeteaseBindDreamEngineUi {
                     } else if (ACTION_STATUS.equals(event.getPayload())) {
                         bridge.forwardBindCommand(event.getPlayer(), new String[]{"status"}, "正在查询账号互通状态...");
                     } else if (ACTION_UNBIND_PAGE.equals(event.getPayload())) {
-                        event.getPlayer().sendMessage("请在确认页面中再次点击确认解除绑定");
+                        event.getPlayer().sendMessage(bridge.warning("请在确认页面中再次点击确认解除绑定"));
                         openUnbindConfirm(event.getPlayer());
                     }
                 });
@@ -72,7 +73,7 @@ final class NeteaseBindDreamEngineUi {
                     } else if (ACTION_STATUS.equals(event.getPayload())) {
                         bridge.forwardBindCommand(event.getPlayer(), new String[]{"status"}, "正在查询账号互通状态...");
                     } else if (ACTION_UNBIND_PAGE.equals(event.getPayload())) {
-                        event.getPlayer().sendMessage("请在确认页面中再次点击确认解除绑定");
+                        event.getPlayer().sendMessage(bridge.warning("请在确认页面中再次点击确认解除绑定"));
                         openUnbindConfirm(event.getPlayer());
                     }
                 });
@@ -89,7 +90,11 @@ final class NeteaseBindDreamEngineUi {
                 .input("验证码", "", value -> code[0] = value == null ? "" : value.trim())
                 .onSubmit(response -> Bukkit.getScheduler().runTask(bridge.plugin(), () -> {
                     if (javaName[0].isEmpty() || code[0].isEmpty()) {
-                        player.sendMessage("Java 玩家名和验证码不能为空");
+                        player.sendMessage(bridge.warning("Java 玩家名和验证码不能为空"));
+                        return;
+                    }
+                    if (!code[0].matches(CODE_PATTERN)) {
+                        player.sendMessage(bridge.warning("验证码格式不正确，请输入 6 位数字验证码"));
                         return;
                     }
                     bridge.forwardBindCommand(player, new String[]{javaName[0], code[0]}, "已提交绑定信息，正在校验...");
