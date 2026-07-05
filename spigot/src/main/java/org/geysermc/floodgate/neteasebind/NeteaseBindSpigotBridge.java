@@ -24,9 +24,11 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.messaging.PluginMessageListener;
 import org.geysermc.floodgate.SpigotPlugin;
+import org.geysermc.floodgate.api.FloodgateApi;
 import org.geysermc.floodgate.api.netease.EntryType;
 import org.geysermc.floodgate.api.netease.NeteaseAccountApi;
 import org.geysermc.floodgate.api.netease.NeteaseAccountBridge;
+import org.geysermc.floodgate.api.player.FloodgatePlayer;
 
 public final class NeteaseBindSpigotBridge implements Listener, PluginMessageListener, CommandExecutor, TabCompleter, NeteaseAccountApi {
     private final SpigotPlugin plugin;
@@ -204,7 +206,11 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
 
     @Override
     public EntryType getEntryType(UUID playerUuid) {
-        return entryTypes.getOrDefault(playerUuid, EntryType.UNKNOWN);
+        EntryType entryType = entryTypes.get(playerUuid);
+        if (entryType != null) {
+            return entryType;
+        }
+        return isKnownFloodgatePlayer(playerUuid) ? EntryType.BEDROCK : EntryType.JAVA;
     }
 
     @Override
@@ -219,6 +225,15 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
         } else {
             javaUuids.put(playerUuid, javaUuid);
         }
+    }
+
+    private boolean isKnownFloodgatePlayer(UUID playerUuid) {
+        for (FloodgatePlayer player : FloodgateApi.getInstance().getPlayers()) {
+            if (playerUuid.equals(player.getCorrectUniqueId()) || playerUuid.equals(player.getJavaUniqueId())) {
+                return true;
+            }
+        }
+        return FloodgateApi.getInstance().isFloodgateId(playerUuid);
     }
 
     private void remove(UUID playerUuid) {
