@@ -10,10 +10,11 @@ import java.util.List;
 import java.util.Map;
 
 public final class NeteaseBindConfig {
+    private static final String COMMAND_NAME = "neteasebind";
+    private static final String COMMAND_ALIASES = "nbind";
+
     private final boolean enabled;
     private final String bindServer;
-    private final String commandName;
-    private final String commandAliases;
     private final String bindingTable;
     private final long codeExpireSeconds;
     private final long loginCheckTimeoutMillis;
@@ -29,8 +30,6 @@ public final class NeteaseBindConfig {
     public NeteaseBindConfig(
             boolean enabled,
             String bindServer,
-            String commandName,
-            String commandAliases,
             String bindingTable,
             long codeExpireSeconds,
             long loginCheckTimeoutMillis,
@@ -44,8 +43,6 @@ public final class NeteaseBindConfig {
             String loginTaskRejectedMessage) {
         this.enabled = enabled;
         this.bindServer = bindServer;
-        this.commandName = commandName;
-        this.commandAliases = commandAliases;
         this.bindingTable = bindingTable;
         this.codeExpireSeconds = codeExpireSeconds;
         this.loginCheckTimeoutMillis = loginCheckTimeoutMillis;
@@ -69,10 +66,8 @@ public final class NeteaseBindConfig {
         Map<String, List<String>> values = parseSimpleYaml(path);
         return new NeteaseBindConfig(
                 Boolean.parseBoolean(getScalar(values, "enabled", "true").trim()),
-                getScalar(values, "bind-server", "bind-lobby").trim(),
-                getScalar(values, "command.name", "neteasebind").trim(),
-                join(getList(values, "command.aliases", singletonList("nbind"))),
-                getScalar(values, "binding.table", "java_bedrock_bindings").trim(),
+                getScalar(values, "bind-server", "neteasebind_login").trim(),
+                getScalar(values, "binding.table", "neteasebind").trim(),
                 Long.parseLong(getScalar(values, "binding.code-expire-seconds", "300").trim()),
                 Long.parseLong(getScalar(values, "binding.login-check-timeout-millis", "3000").trim()),
                 Boolean.parseBoolean(getScalar(values, "binding.use-origin-bedrock-name", "true").trim()),
@@ -215,38 +210,18 @@ public final class NeteaseBindConfig {
         return list == null || list.isEmpty() ? fallback : list.get(0);
     }
 
-    private static List<String> getList(Map<String, List<String>> values, String key, List<String> fallback) {
-        List<String> list = values.get(key);
-        return list == null ? fallback : list;
-    }
-
     private static List<String> singletonList(String value) {
         List<String> list = new ArrayList<>();
         list.add(value);
         return list;
     }
 
-    private static String join(List<String> values) {
-        StringBuilder builder = new StringBuilder();
-        for (String value : values) {
-            if (builder.length() > 0) {
-                builder.append(',');
-            }
-            builder.append(value);
-        }
-        return builder.toString();
-    }
-
     private static String defaultConfigText() {
         return "# 梦想之城账号互通配置\n\n"
                 + "enabled: true\n"
-                + "bind-server: bind-lobby\n\n"
-                + "command:\n"
-                + "  name: neteasebind\n"
-                + "  aliases:\n"
-                + "    - nbind\n\n"
+                + "bind-server: neteasebind_login\n\n"
                 + "binding:\n"
-                + "  table: java_bedrock_bindings\n"
+                + "  table: neteasebind\n"
                 + "  code-expire-seconds: 300\n"
                 + "  login-check-timeout-millis: 3000\n"
                 + "  use-origin-bedrock-name: true\n\n"
@@ -269,11 +244,11 @@ public final class NeteaseBindConfig {
     }
 
     public String commandName() {
-        return commandName;
+        return COMMAND_NAME;
     }
 
     public String commandAliases() {
-        return commandAliases;
+        return COMMAND_ALIASES;
     }
 
     public String bindingTable() {
