@@ -21,9 +21,16 @@ public final class PendingBindService {
 
     public PendingBind create(UUID javaUuid, String javaName) {
         cleanup();
-        String oldCode = codeByJavaUuid.remove(javaUuid);
+        Instant expiresAt = Instant.now().plus(ttl);
+        String oldCode = codeByJavaUuid.get(javaUuid);
         if (oldCode != null) {
-            byCode.remove(oldCode);
+            PendingBind existing = byCode.get(oldCode);
+            if (existing != null) {
+                PendingBind refreshed = new PendingBind(existing.code(), javaUuid, javaName, expiresAt);
+                byCode.put(existing.code(), refreshed);
+                return refreshed;
+            }
+            codeByJavaUuid.remove(javaUuid);
         }
 
         String code;
@@ -31,7 +38,7 @@ public final class PendingBindService {
             code = String.format("%06d", random.nextInt(1_000_000));
         } while (byCode.containsKey(code));
 
-        PendingBind pending = new PendingBind(code, javaUuid, javaName, Instant.now().plus(ttl));
+        PendingBind pending = new PendingBind(code, javaUuid, javaName, expiresAt);
         byCode.put(code, pending);
         codeByJavaUuid.put(javaUuid, code);
         return pending;
