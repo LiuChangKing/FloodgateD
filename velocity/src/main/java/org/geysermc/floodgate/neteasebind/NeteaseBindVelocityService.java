@@ -47,6 +47,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.geysermc.floodgate.VelocityPlugin;
 import org.geysermc.floodgate.api.ProxyFloodgateApi;
 import org.geysermc.floodgate.api.logger.FloodgateLogger;
@@ -56,6 +57,7 @@ import org.geysermc.floodgate.api.netease.NeteaseAccountBridge;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
 
 public final class NeteaseBindVelocityService implements NeteaseAccountApi {
+    private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.legacyAmpersand();
     private final ProxyServer proxy;
     private final ProxyFloodgateApi floodgateApi;
     private final FloodgateLogger logger;
@@ -265,7 +267,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             completeLoginCheck(loginCheck);
             return;
         }
-        deniedJavaLogins.put(loginCheck.originalUuid(), Component.text(javaMessage));
+        deniedJavaLogins.put(loginCheck.originalUuid(), message(javaMessage));
         logger.warn("Denying Java login {} because {}", loginCheck.originalUuid(), reason);
         completeLoginCheck(loginCheck);
     }
@@ -360,7 +362,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
 
         Optional<RegisteredServer> bindServer = proxy.getServer(config.bindServer());
         if (bindServer.isPresent()) {
-            player.sendMessage(Component.text(config.unboundRedirectMessage()));
+            player.sendMessage(message(config.unboundRedirectMessage()));
             event.setResult(ServerPreConnectEvent.ServerResult.allowed(bindServer.get()));
         } else {
             player.disconnect(Component.text("绑定服不存在: " + config.bindServer()));
@@ -467,7 +469,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             return;
         }
         if (repository.isJavaBound(uuid)) {
-            player.sendMessage(Component.text(config.alreadyBoundMessage()));
+            player.sendMessage(message(config.alreadyBoundMessage()));
             return;
         }
 
@@ -487,7 +489,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             return;
         }
         if (repository.isBedrockBound(bedrockUuid)) {
-            player.sendMessage(Component.text(config.bedrockAlreadyBoundMessage()));
+            player.sendMessage(message(config.bedrockAlreadyBoundMessage()));
             return;
         }
 
@@ -503,7 +505,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             return;
         }
         if (repository.isJavaBound(pending.javaUuid())) {
-            player.sendMessage(Component.text(config.alreadyBoundMessage()));
+            player.sendMessage(message(config.alreadyBoundMessage()));
             return;
         }
 
@@ -511,7 +513,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
         repository.createBinding(pending.javaUuid(), bedrockUuid);
         player.sendMessage(Component.text("绑定成功: " + pending.javaName() + " -> " + bedrockProfile.get().displayName()));
         proxy.getPlayer(pending.javaUuid()).ifPresent(javaPlayer ->
-                javaPlayer.disconnect(Component.text(config.kickAfterBindMessage())));
+                javaPlayer.disconnect(message(config.kickAfterBindMessage())));
     }
 
     private void showStatus(Player player, BindingRepository repository) throws SQLException {
@@ -601,6 +603,10 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             }
             return java.util.Collections.emptyList();
         }
+    }
+
+    private static Component message(String text) {
+        return LEGACY.deserialize(text == null ? "" : text);
     }
 
     private static final class LoginCheck {

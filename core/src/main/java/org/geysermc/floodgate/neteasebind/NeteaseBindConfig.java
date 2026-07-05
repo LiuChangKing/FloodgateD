@@ -12,6 +12,9 @@ import java.util.Map;
 public final class NeteaseBindConfig {
     private static final String COMMAND_NAME = "neteasebind";
     private static final String COMMAND_ALIASES = "nbind";
+    private static final String SUCCESS_PREFIX = "&8[&a&l!&8] &a";
+    private static final String WARNING_PREFIX = "&8[&e&l!&8] &e";
+    private static final String ERROR_PREFIX = "&8[&c&l!&8] &c";
 
     private final boolean enabled;
     private final String bindServer;
@@ -71,13 +74,13 @@ public final class NeteaseBindConfig {
                 Long.parseLong(getScalar(values, "binding.code-expire-seconds", "300").trim()),
                 Long.parseLong(getScalar(values, "binding.login-check-timeout-millis", "3000").trim()),
                 Boolean.parseBoolean(getScalar(values, "binding.use-origin-bedrock-name", "true").trim()),
-                getScalar(values, "messages.kick-after-bind", "绑定完成，请重新进入服务器"),
-                getScalar(values, "messages.unbound-redirect", "请先在绑定服完成 Java 与基岩账号绑定"),
-                getScalar(values, "messages.already-bound", "你的 Java 账号已经绑定过基岩账号"),
-                getScalar(values, "messages.bedrock-already-bound", "这个基岩账号已经被绑定"),
-                getScalar(values, "messages.bind-system-unavailable", "账号互通服务暂时不可用，请稍后重试"),
-                getScalar(values, "messages.bind-system-timeout", "账号互通验证响应超时，请稍后重试"),
-                getScalar(values, "messages.login-task-rejected", "账号互通服务繁忙，请稍后重试")
+                getScalar(values, "messages.kick-after-bind", SUCCESS_PREFIX + "绑定完成，请重新进入服务器"),
+                getScalar(values, "messages.unbound-redirect", WARNING_PREFIX + "请先在绑定服完成 Java 与基岩账号绑定"),
+                getScalar(values, "messages.already-bound", WARNING_PREFIX + "你的 Java 账号已经绑定过基岩账号"),
+                getScalar(values, "messages.bedrock-already-bound", WARNING_PREFIX + "这个基岩账号已经被绑定"),
+                getScalar(values, "messages.bind-system-unavailable", ERROR_PREFIX + "账号互通服务暂时不可用，请稍后重试"),
+                getScalar(values, "messages.bind-system-timeout", ERROR_PREFIX + "账号互通验证响应超时，请稍后重试"),
+                getScalar(values, "messages.login-task-rejected", ERROR_PREFIX + "账号互通服务繁忙，请稍后重试")
         );
     }
 
@@ -226,13 +229,13 @@ public final class NeteaseBindConfig {
                 + "  login-check-timeout-millis: 3000\n"
                 + "  use-origin-bedrock-name: true\n\n"
                 + "messages:\n"
-                + "  kick-after-bind: \"绑定完成，请重新进入服务器\"\n"
-                + "  unbound-redirect: \"请先在绑定服完成 Java 与基岩账号绑定\"\n"
-                + "  already-bound: \"你的 Java 账号已经绑定过基岩账号\"\n"
-                + "  bedrock-already-bound: \"这个基岩账号已经被绑定\"\n"
-                + "  bind-system-unavailable: \"账号互通服务暂时不可用，请稍后重试\"\n"
-                + "  bind-system-timeout: \"账号互通验证响应超时，请稍后重试\"\n"
-                + "  login-task-rejected: \"账号互通服务繁忙，请稍后重试\"\n";
+                + "  kick-after-bind: \"" + SUCCESS_PREFIX + "绑定完成，请重新进入服务器\"\n"
+                + "  unbound-redirect: \"" + WARNING_PREFIX + "请先在绑定服完成 Java 与基岩账号绑定\"\n"
+                + "  already-bound: \"" + WARNING_PREFIX + "你的 Java 账号已经绑定过基岩账号\"\n"
+                + "  bedrock-already-bound: \"" + WARNING_PREFIX + "这个基岩账号已经被绑定\"\n"
+                + "  bind-system-unavailable: \"" + ERROR_PREFIX + "账号互通服务暂时不可用，请稍后重试\"\n"
+                + "  bind-system-timeout: \"" + ERROR_PREFIX + "账号互通验证响应超时，请稍后重试\"\n"
+                + "  login-task-rejected: \"" + ERROR_PREFIX + "账号互通服务繁忙，请稍后重试\"\n";
     }
 
     public boolean enabled() {
