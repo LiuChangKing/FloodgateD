@@ -231,7 +231,7 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
         if (entryType != null) {
             return entryType;
         }
-        return isKnownFloodgatePlayer(playerUuid) ? EntryType.BEDROCK : EntryType.JAVA;
+        return getLegacyFloodgateEntryType(playerUuid);
     }
 
     @Override
@@ -248,13 +248,21 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
         }
     }
 
-    private boolean isKnownFloodgatePlayer(UUID playerUuid) {
-        for (FloodgatePlayer player : FloodgateApi.getInstance().getPlayers()) {
+    private EntryType getLegacyFloodgateEntryType(UUID playerUuid) {
+        return isLegacyFloodgatePlayer(playerUuid) ? EntryType.BEDROCK : EntryType.JAVA;
+    }
+
+    private boolean isLegacyFloodgatePlayer(UUID playerUuid) {
+        FloodgateApi api = FloodgateApi.getInstance();
+        if (api == null || playerUuid == null) {
+            return false;
+        }
+        for (FloodgatePlayer player : api.getPlayers()) {
             if (playerUuid.equals(player.getCorrectUniqueId()) || playerUuid.equals(player.getJavaUniqueId())) {
                 return true;
             }
         }
-        return FloodgateApi.getInstance().isFloodgateId(playerUuid);
+        return api.isFloodgateId(playerUuid);
     }
 
     private void remove(UUID playerUuid) {
