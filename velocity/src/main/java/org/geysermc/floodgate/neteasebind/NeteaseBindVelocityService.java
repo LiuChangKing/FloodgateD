@@ -273,7 +273,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
     }
 
     private boolean isKnownFloodgatePlayer(UUID uuid) {
-        FloodgatePlayer player = floodgateApi.getPlayer(uuid);
+        FloodgatePlayer player = floodgateApi.getPlayerWithoutNeteaseBindFilter(uuid);
         return player != null;
     }
 

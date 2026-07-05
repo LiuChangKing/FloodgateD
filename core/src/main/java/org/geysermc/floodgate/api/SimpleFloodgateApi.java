@@ -91,6 +91,10 @@ public class SimpleFloodgateApi implements FloodgateApi {
         if (isNeteaseBindBridgeBoundJavaSession(uuid)) {
             return null;
         }
+        return getPlayerWithoutNeteaseBindFilter(uuid);
+    }
+
+    public FloodgatePlayer getPlayerWithoutNeteaseBindFilter(UUID uuid) {
         FloodgatePlayer selfPlayer = players.get(uuid);
         if (selfPlayer != null) {
             return selfPlayer;
