@@ -96,4 +96,8 @@ public final class SpigotPlugin extends JavaPlugin {
         }
         platform.disable();
     }
+
+    public NeteaseBindSpigotBridge getNeteaseBindBridge() {
+        return neteaseBindBridge;
+    }
 }

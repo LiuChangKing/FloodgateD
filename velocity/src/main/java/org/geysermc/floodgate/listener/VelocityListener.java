@@ -53,6 +53,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import net.kyori.adventure.text.Component;
+import org.geysermc.floodgate.VelocityPlugin;
 import org.geysermc.floodgate.api.ProxyFloodgateApi;
 import org.geysermc.floodgate.api.logger.FloodgateLogger;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
@@ -119,6 +120,14 @@ public final class VelocityListener {
 
     @Subscribe(order = PostOrder.EARLY)
     public void onPreLogin(PreLoginEvent event) {
+        String databaseBlockReason = VelocityPlugin.validateDataSourceReady();
+        if (databaseBlockReason != null) {
+            event.setResult(
+                    PreLoginEvent.PreLoginComponentResult.denied(Component.text(databaseBlockReason))
+            );
+            return;
+        }
+
         FloodgatePlayer player = null;
         String kickMessage;
         try {

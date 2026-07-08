@@ -29,14 +29,13 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.Collections;
 import java.util.UUID;
 import org.geysermc.floodgate.VelocityPlugin;
 
 public class VelocityRenameUtil {
 
     public static String lookupName(final UUID id, final String name, final String type) {
-        try (Connection conn = VelocityPlugin.getDataSource().getConnection()){
+        try (Connection conn = VelocityPlugin.requireDataSource().getConnection()){
             try (PreparedStatement sql = conn.prepareStatement(
                     "SELECT name FROM localprofile WHERE id = ?")){
                 sql.setString(1, id.toString());
@@ -49,7 +48,7 @@ public class VelocityRenameUtil {
                 }
             }
         } catch (SQLException e) {
-            return name;
+            throw new IllegalStateException("Failed to lookup or reserve player name in localprofile", e);
         }
     }
 
@@ -71,21 +70,31 @@ public class VelocityRenameUtil {
             } catch (SQLException e) {
                 String msg = e.getMessage();
                 if (isDuplicateKey(msg) && msg.contains("PRIMARY")) {
-                    // UUID（id）已经存在，说明已有记录，直接返回原始名称即可
-                    return name;
+                    return lookupExistingName(id, name, conn);
                 } else if (isDuplicateKey(msg) && isNameKey(msg)) {
-                    // 名字冲突，尝试新的名字
                     ++count;
-                    int usernameLength = Math.min(name.length(), 13); // 确保不超过16个字符
-                    if (count >= 10) {
-                        usernameLength = usernameLength - 1;
-                    }
-                    mod = name.substring(0, usernameLength) + "_" + count;
+                    mod = withCollisionSuffix(name, count);
                 } else {
-                    e.printStackTrace();
+                    throw e;
                 }
             }
         }
+    }
+
+    private static String lookupExistingName(UUID id, String fallback, Connection conn) throws SQLException {
+        try (PreparedStatement sql = conn.prepareStatement(
+                "SELECT name FROM localprofile WHERE id = ?")) {
+            sql.setString(1, id.toString());
+            try (ResultSet set = sql.executeQuery()) {
+                return set.next() ? set.getString("name") : fallback;
+            }
+        }
+    }
+
+    private static String withCollisionSuffix(String name, int count) {
+        String suffix = "_" + count;
+        int usernameLength = Math.min(name.length(), Math.max(0, 16 - suffix.length()));
+        return name.substring(0, usernameLength) + suffix;
     }
 
     private static boolean isDuplicateKey(String msg) {

@@ -5,8 +5,11 @@ import com.liuchangking.dreamengine.api.CrossUI;
 import com.liuchangking.dreamengine.api.PlatformAPI;
 import com.liuchangking.dreamengine.ui.ElementsForm;
 import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
+
+import java.lang.reflect.Method;
 
 final class NeteaseBindDreamEngineUi {
     private static final String ACTION_GENERATE = "generate";
@@ -15,6 +18,9 @@ final class NeteaseBindDreamEngineUi {
     private static final String ACTION_UNBIND_PAGE = "unbind_page";
     private static final String ACTION_UNBIND_CONFIRM = "unbind_confirm";
     private static final String ACTION_BACK = "back";
+    private static final String ICON_BIND = "textures/ui/confirm";
+    private static final String ICON_STATUS = "textures/ui/icon_map";
+    private static final String ICON_UNBIND = "textures/ui/cancel";
     private static final String CODE_PATTERN = "\\d{6}";
 
     private final NeteaseBindSpigotBridge bridge;
@@ -33,8 +39,8 @@ final class NeteaseBindDreamEngineUi {
 
     private void openJavaMenu(Player player) {
         CrossPlatformMenu<String> menu = CrossUI.stringMenu(player)
-                .title("账号管理")
-                .content("生成验证码后，请使用你的网易基岩账号确认绑定。\n如果已经完成绑定，可以在这里解除绑定。")
+                .title(color("账号互通关联"))
+                .content(color("生成验证码后，请使用你的网易基岩账号确认绑定。\n如果已经完成绑定，可以在这里解除绑定。"))
                 .buttonAt(11, Material.PAPER, "生成绑定验证码", lore(
                         "点击后生成一枚临时验证码",
                         "让基岩账号输入 Java 名和验证码完成绑定"
@@ -49,11 +55,10 @@ final class NeteaseBindDreamEngineUi {
                 ), ACTION_UNBIND_PAGE)
                 .onClick(event -> {
                     if (ACTION_GENERATE.equals(event.getPayload())) {
-                        bridge.forwardBindCommand(event.getPlayer(), new String[0], "正在生成绑定验证码...");
+                        submitAndClose(event.getPlayer(), new String[0], "正在生成绑定验证码...");
                     } else if (ACTION_STATUS.equals(event.getPayload())) {
-                        bridge.forwardBindCommand(event.getPlayer(), new String[]{"status"}, "正在查询账号互通状态...");
+                        submitAndClose(event.getPlayer(), new String[]{"status"}, "正在查询账号互通状态...");
                     } else if (ACTION_UNBIND_PAGE.equals(event.getPayload())) {
-                        event.getPlayer().sendMessage(bridge.warning("请在确认页面中再次点击确认解除绑定"));
                         openUnbindConfirm(event.getPlayer());
                     }
                 });
@@ -62,21 +67,20 @@ final class NeteaseBindDreamEngineUi {
 
     private void openBedrockMenu(Player player) {
         CrossPlatformMenu<String> menu = CrossUI.stringMenu(player)
-                .title("账号管理")
-                .content("绑定时请输入 Java 玩家名和验证码。\n如果当前账号已经绑定，也可以在这里解除绑定。")
-                .button("填写绑定信息", ACTION_BIND_FORM)
-                .button("查看绑定状态", ACTION_STATUS)
-                .button("解除账号绑定", ACTION_UNBIND_PAGE)
-                .onClick(event -> {
-                    if (ACTION_BIND_FORM.equals(event.getPayload())) {
-                        openBedrockConfirmBindForm(event.getPlayer());
-                    } else if (ACTION_STATUS.equals(event.getPayload())) {
-                        bridge.forwardBindCommand(event.getPlayer(), new String[]{"status"}, "正在查询账号互通状态...");
-                    } else if (ACTION_UNBIND_PAGE.equals(event.getPayload())) {
-                        event.getPlayer().sendMessage(bridge.warning("请在确认页面中再次点击确认解除绑定"));
-                        openUnbindConfirm(event.getPlayer());
-                    }
-                });
+                .title(color("账号互通关联"))
+                .content(color("绑定时请输入 Java 玩家名和验证码。\n如果当前账号已经绑定，也可以在这里解除绑定。"));
+        buttonWithIcon(menu, "填写绑定信息", ICON_BIND, ACTION_BIND_FORM);
+        buttonWithIcon(menu, "查看绑定状态", ICON_STATUS, ACTION_STATUS);
+        buttonWithIcon(menu, "解除账号绑定", ICON_UNBIND, ACTION_UNBIND_PAGE);
+        menu.onClick(event -> {
+            if (ACTION_BIND_FORM.equals(event.getPayload())) {
+                openBedrockConfirmBindForm(event.getPlayer());
+            } else if (ACTION_STATUS.equals(event.getPayload())) {
+                submitAndClose(event.getPlayer(), new String[]{"status"}, "正在查询账号互通状态...");
+            } else if (ACTION_UNBIND_PAGE.equals(event.getPayload())) {
+                openUnbindConfirm(event.getPlayer());
+            }
+        });
         menu.open(player);
     }
 
@@ -90,41 +94,80 @@ final class NeteaseBindDreamEngineUi {
                 .input("验证码", "", value -> code[0] = value == null ? "" : value.trim())
                 .onSubmit(response -> Bukkit.getScheduler().runTask(bridge.plugin(), () -> {
                     if (javaName[0].isEmpty() || code[0].isEmpty()) {
-                        player.sendMessage(bridge.warning("Java 玩家名和验证码不能为空"));
+                        bridge.notifyError(player, "信息有误", "Java 玩家名和验证码不能为空");
                         return;
                     }
                     if (!code[0].matches(CODE_PATTERN)) {
-                        player.sendMessage(bridge.warning("验证码格式不正确，请输入 6 位数字验证码"));
+                        bridge.notifyError(player, "信息有误", "验证码格式不正确，请输入 6 位数字验证码");
                         return;
                     }
-                    bridge.forwardBindCommand(player, new String[]{javaName[0], code[0]}, "已提交绑定信息，正在校验...");
+                    submitAndClose(player, new String[]{javaName[0], code[0]}, "已提交绑定信息，正在校验...");
                 }))
                 .open(player);
     }
 
     private void openUnbindConfirm(Player player) {
         CrossPlatformMenu<String> menu = CrossUI.stringMenu(player)
-                .title("解除绑定")
-                .content("解除绑定后，Java 入口账号将不再使用当前基岩身份进入服务器。\n如果你是绑定后的 Java 玩家，确认后会被踢出并需要重新进入。")
+                .title(color("解除绑定"))
+                .content(color("解除绑定后，Java 入口账号将不再使用当前基岩身份进入服务器。\n如果你是绑定后的 Java 玩家，确认后会被踢出并需要重新进入。"))
                 .buttonAt(11, Material.REDSTONE_BLOCK, "确认解除绑定", lore(
                         "此操作会删除 Java 与基岩账号的绑定关系"
                 ), ACTION_UNBIND_CONFIRM)
                 .buttonAt(15, Material.ARROW, "返回", ACTION_BACK)
                 .onClick(event -> {
                     if (ACTION_UNBIND_CONFIRM.equals(event.getPayload())) {
-                        bridge.forwardBindCommand(event.getPlayer(), new String[]{"unbind", "confirm"}, "已提交解绑请求，正在处理...");
+                        submitAndClose(event.getPlayer(), new String[]{"unbind", "confirm"}, "已提交解绑请求，正在处理...");
                     } else if (ACTION_BACK.equals(event.getPayload())) {
                         open(event.getPlayer());
                     }
-        });
+                });
         menu.open(player);
+    }
+
+    private void submitAndClose(Player player, String[] args, String feedbackMessage) {
+        player.closeInventory();
+        bridge.forwardBindCommand(player, args, feedbackMessage);
     }
 
     private static java.util.List<String> lore(String... lines) {
         java.util.List<String> result = new java.util.ArrayList<>();
         for (String line : lines) {
-            result.add("&7" + line);
+            result.add(color("&7" + line));
         }
         return result;
+    }
+
+    private static String color(String text) {
+        return ChatColor.translateAlternateColorCodes('&', text == null ? "" : text);
+    }
+
+    private static void buttonWithIcon(CrossPlatformMenu<String> menu, String label, String icon, String payload) {
+        if (tryInvokeButtonWithIcon(menu, label, icon, payload,
+                String.class, String.class, String.class, Object.class)) {
+            return;
+        }
+        if (tryInvokeButtonWithIcon(menu, label, icon, payload,
+                String.class, String.class, Object.class)) {
+            return;
+        }
+        menu.button(label, payload);
+    }
+
+    private static boolean tryInvokeButtonWithIcon(CrossPlatformMenu<String> menu,
+                                                   String label,
+                                                   String icon,
+                                                   String payload,
+                                                   Class<?>... parameterTypes) {
+        try {
+            Method method = menu.getClass().getMethod("buttonWithIcon", parameterTypes);
+            if (parameterTypes.length == 4) {
+                method.invoke(menu, label, label, icon, payload);
+            } else {
+                method.invoke(menu, label, icon, payload);
+            }
+            return true;
+        } catch (ReflectiveOperationException ignored) {
+            return false;
+        }
     }
 }

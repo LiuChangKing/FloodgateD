@@ -24,11 +24,16 @@ public final class NeteaseBindConfig {
     private final boolean useOriginBedrockName;
     private final String kickAfterBindMessage;
     private final String unboundRedirectMessage;
+    private final String unboundBindPromptMessage;
+    private final String unboundBindTitle;
+    private final String unboundBindSubtitle;
     private final String alreadyBoundMessage;
     private final String bedrockAlreadyBoundMessage;
+    private final String boundJavaLoginBlockedNotifyMessage;
     private final String bindSystemUnavailableMessage;
     private final String bindSystemTimeoutMessage;
     private final String loginTaskRejectedMessage;
+    private final long unboundPromptIntervalSeconds;
 
     public NeteaseBindConfig(
             boolean enabled,
@@ -36,11 +41,16 @@ public final class NeteaseBindConfig {
             String bindingTable,
             long codeExpireSeconds,
             long loginCheckTimeoutMillis,
+            long unboundPromptIntervalSeconds,
             boolean useOriginBedrockName,
             String kickAfterBindMessage,
             String unboundRedirectMessage,
+            String unboundBindPromptMessage,
+            String unboundBindTitle,
+            String unboundBindSubtitle,
             String alreadyBoundMessage,
             String bedrockAlreadyBoundMessage,
+            String boundJavaLoginBlockedNotifyMessage,
             String bindSystemUnavailableMessage,
             String bindSystemTimeoutMessage,
             String loginTaskRejectedMessage) {
@@ -49,11 +59,16 @@ public final class NeteaseBindConfig {
         this.bindingTable = bindingTable;
         this.codeExpireSeconds = codeExpireSeconds;
         this.loginCheckTimeoutMillis = loginCheckTimeoutMillis;
+        this.unboundPromptIntervalSeconds = unboundPromptIntervalSeconds;
         this.useOriginBedrockName = useOriginBedrockName;
         this.kickAfterBindMessage = kickAfterBindMessage;
         this.unboundRedirectMessage = unboundRedirectMessage;
+        this.unboundBindPromptMessage = unboundBindPromptMessage;
+        this.unboundBindTitle = unboundBindTitle;
+        this.unboundBindSubtitle = unboundBindSubtitle;
         this.alreadyBoundMessage = alreadyBoundMessage;
         this.bedrockAlreadyBoundMessage = bedrockAlreadyBoundMessage;
+        this.boundJavaLoginBlockedNotifyMessage = boundJavaLoginBlockedNotifyMessage;
         this.bindSystemUnavailableMessage = bindSystemUnavailableMessage;
         this.bindSystemTimeoutMessage = bindSystemTimeoutMessage;
         this.loginTaskRejectedMessage = loginTaskRejectedMessage;
@@ -73,11 +88,16 @@ public final class NeteaseBindConfig {
                 getScalar(values, "binding.table", "neteasebind").trim(),
                 Long.parseLong(getScalar(values, "binding.code-expire-seconds", "300").trim()),
                 Long.parseLong(getScalar(values, "binding.login-check-timeout-millis", "3000").trim()),
+                Long.parseLong(getScalar(values, "binding.unbound-prompt-interval-seconds", "10").trim()),
                 Boolean.parseBoolean(getScalar(values, "binding.use-origin-bedrock-name", "true").trim()),
                 getScalar(values, "messages.kick-after-bind", SUCCESS_PREFIX + "绑定完成，请重新进入服务器"),
                 getScalar(values, "messages.unbound-redirect", WARNING_PREFIX + "请先在绑定服完成 Java 与基岩账号绑定"),
+                getScalar(values, "messages.unbound-bind-prompt", WARNING_PREFIX + "你必须与一个网易基岩版账户绑定才能进行游戏, 请根据教程来操作"),
+                getScalar(values, "messages.unbound-bind-title", "&e请完成账号绑定"),
+                getScalar(values, "messages.unbound-bind-subtitle", "&f你必须与一个网易基岩版账户绑定才能进行游戏"),
                 getScalar(values, "messages.already-bound", WARNING_PREFIX + "你的 Java 账号已经绑定过基岩账号"),
                 getScalar(values, "messages.bedrock-already-bound", WARNING_PREFIX + "这个基岩账号已经被绑定"),
+                getScalar(values, "messages.bound-java-login-blocked-notify", WARNING_PREFIX + "您绑定的 Java 账号 %java_name% 进入服务器，已被阻止。"),
                 getScalar(values, "messages.bind-system-unavailable", ERROR_PREFIX + "账号互通服务暂时不可用，请稍后重试"),
                 getScalar(values, "messages.bind-system-timeout", ERROR_PREFIX + "账号互通验证响应超时，请稍后重试"),
                 getScalar(values, "messages.login-task-rejected", ERROR_PREFIX + "账号互通服务繁忙，请稍后重试")
@@ -227,12 +247,17 @@ public final class NeteaseBindConfig {
                 + "  table: neteasebind\n"
                 + "  code-expire-seconds: 300\n"
                 + "  login-check-timeout-millis: 3000\n"
+                + "  unbound-prompt-interval-seconds: 10\n"
                 + "  use-origin-bedrock-name: true\n\n"
                 + "messages:\n"
                 + "  kick-after-bind: \"" + SUCCESS_PREFIX + "绑定完成，请重新进入服务器\"\n"
                 + "  unbound-redirect: \"" + WARNING_PREFIX + "请先在绑定服完成 Java 与基岩账号绑定\"\n"
+                + "  unbound-bind-prompt: \"" + WARNING_PREFIX + "你必须与一个网易基岩版账户绑定才能进行游戏, 请根据教程来操作\"\n"
+                + "  unbound-bind-title: \"&e请完成账号绑定\"\n"
+                + "  unbound-bind-subtitle: \"&f你必须与一个网易基岩版账户绑定才能进行游戏\"\n"
                 + "  already-bound: \"" + WARNING_PREFIX + "你的 Java 账号已经绑定过基岩账号\"\n"
                 + "  bedrock-already-bound: \"" + WARNING_PREFIX + "这个基岩账号已经被绑定\"\n"
+                + "  bound-java-login-blocked-notify: \"" + WARNING_PREFIX + "您绑定的 Java 账号 %java_name% 进入服务器，已被阻止。\"\n"
                 + "  bind-system-unavailable: \"" + ERROR_PREFIX + "账号互通服务暂时不可用，请稍后重试\"\n"
                 + "  bind-system-timeout: \"" + ERROR_PREFIX + "账号互通验证响应超时，请稍后重试\"\n"
                 + "  login-task-rejected: \"" + ERROR_PREFIX + "账号互通服务繁忙，请稍后重试\"\n";
@@ -266,6 +291,10 @@ public final class NeteaseBindConfig {
         return loginCheckTimeoutMillis;
     }
 
+    public long unboundPromptIntervalSeconds() {
+        return unboundPromptIntervalSeconds;
+    }
+
     public boolean useOriginBedrockName() {
         return useOriginBedrockName;
     }
@@ -278,12 +307,28 @@ public final class NeteaseBindConfig {
         return unboundRedirectMessage;
     }
 
+    public String unboundBindPromptMessage() {
+        return unboundBindPromptMessage;
+    }
+
+    public String unboundBindTitle() {
+        return unboundBindTitle;
+    }
+
+    public String unboundBindSubtitle() {
+        return unboundBindSubtitle;
+    }
+
     public String alreadyBoundMessage() {
         return alreadyBoundMessage;
     }
 
     public String bedrockAlreadyBoundMessage() {
         return bedrockAlreadyBoundMessage;
+    }
+
+    public String boundJavaLoginBlockedNotifyMessage() {
+        return boundJavaLoginBlockedNotifyMessage;
     }
 
     public String bindSystemUnavailableMessage() {

@@ -59,6 +59,20 @@ public final class PendingBindService {
         return Optional.ofNullable(byCode.get(code));
     }
 
+    public boolean hasActiveBind(UUID javaUuid) {
+        return activeBindExpiresAtMillis(javaUuid) > 0L;
+    }
+
+    public long activeBindExpiresAtMillis(UUID javaUuid) {
+        cleanup();
+        String code = codeByJavaUuid.get(javaUuid);
+        if (code == null) {
+            return 0L;
+        }
+        PendingBind pending = byCode.get(code);
+        return pending == null ? 0L : pending.expiresAtMillis();
+    }
+
     public void removeByJavaUuid(UUID javaUuid) {
         String code = codeByJavaUuid.remove(javaUuid);
         if (code != null) {

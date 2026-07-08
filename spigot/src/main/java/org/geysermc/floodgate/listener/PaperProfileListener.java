@@ -33,8 +33,11 @@ import java.util.Set;
 import java.util.UUID;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.geysermc.floodgate.SpigotPlugin;
 import org.geysermc.floodgate.api.SimpleFloodgateApi;
+import org.geysermc.floodgate.api.netease.NeteaseBindProfileProperties;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
+import org.geysermc.floodgate.neteasebind.NeteaseBindSpigotBridge;
 import org.geysermc.floodgate.util.Constants;
 
 public final class PaperProfileListener implements Listener {
@@ -45,6 +48,7 @@ public final class PaperProfileListener implements Listener {
     );
 
     @Inject private SimpleFloodgateApi api;
+    @Inject private SpigotPlugin plugin;
 
     @EventHandler
     public void onFill(PreFillProfileEvent event) {
@@ -52,6 +56,8 @@ public final class PaperProfileListener implements Listener {
         if (id == null) {
             return;
         }
+
+        rememberNeteaseEntryType(event, id);
 
         FloodgatePlayer player = api.getPlayer(id);
         if (player == null || player.isLinked()) {
@@ -69,5 +75,23 @@ public final class PaperProfileListener implements Listener {
         properties.add(DEFAULT_TEXTURE_PROPERTY);
 
         event.setProperties(properties);
+    }
+
+    private void rememberNeteaseEntryType(PreFillProfileEvent event, UUID id) {
+        NeteaseBindSpigotBridge bridge = plugin.getNeteaseBindBridge();
+        if (bridge == null) {
+            return;
+        }
+
+        String entryType = null;
+        String javaUuid = null;
+        for (ProfileProperty property : event.getPlayerProfile().getProperties()) {
+            if (NeteaseBindProfileProperties.ENTRY_TYPE.equals(property.getName())) {
+                entryType = property.getValue();
+            } else if (NeteaseBindProfileProperties.JAVA_UUID.equals(property.getName())) {
+                javaUuid = property.getValue();
+            }
+        }
+        bridge.updateFromForwardedProfile(id, entryType, javaUuid);
     }
 }

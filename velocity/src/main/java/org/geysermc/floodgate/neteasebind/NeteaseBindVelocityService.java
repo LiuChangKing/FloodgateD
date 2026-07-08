@@ -1,10 +1,6 @@
 package org.geysermc.floodgate.neteasebind;
 
 import com.google.inject.Inject;
-import com.velocitypowered.api.command.CommandManager;
-import com.velocitypowered.api.command.CommandMeta;
-import com.velocitypowered.api.command.CommandSource;
-import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.event.Continuation;
 import com.velocitypowered.api.event.PostOrder;
 import com.velocitypowered.api.event.ResultedEvent;
@@ -23,6 +19,7 @@ import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.util.GameProfile;
+import com.velocitypowered.api.util.GameProfile.Property;
 import com.zaxxer.hikari.HikariDataSource;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -33,9 +30,12 @@ import java.nio.file.Path;
 import java.sql.SQLException;
 import java.sql.SQLIntegrityConstraintViolationException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -53,6 +53,7 @@ import org.geysermc.floodgate.VelocityPlugin;
 import org.geysermc.floodgate.api.ProxyFloodgateApi;
 import org.geysermc.floodgate.api.logger.FloodgateLogger;
 import org.geysermc.floodgate.api.netease.EntryType;
+import org.geysermc.floodgate.api.netease.NeteaseBindProfileProperties;
 import org.geysermc.floodgate.api.netease.NeteaseAccountApi;
 import org.geysermc.floodgate.api.netease.NeteaseAccountBridge;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
@@ -63,6 +64,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
     private static final String WARNING_PREFIX = "&8[&e&l!&8] &e";
     private static final String ERROR_PREFIX = "&8[&c&l!&8] &c";
     private static final String CODE_PATTERN = "\\d{6}";
+    private static final String LEGACY_FLOODGATE_UUID_MARKER = "00000000-0000-4000-8000";
     private final ProxyServer proxy;
     private final ProxyFloodgateApi floodgateApi;
     private final FloodgateLogger logger;
@@ -92,10 +94,13 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
         this.pendingBinds = new PendingBindService(Duration.ofSeconds(config.codeExpireSeconds()));
 
         if (config.enabled()) {
-            registerCommand();
+            if (getRepository() == null) {
+                throw new IllegalStateException("Netease bind requires the Floodgate datasource at startup");
+            }
             proxy.getChannelRegistrar().register(bridgeChannel);
             NeteaseAccountBridge.setInstance(this);
-            logger.info("Netease bind enabled. bind-server={}, table={}", config.bindServer(), config.bindingTable());
+            logger.info("Netease bind enabled. bind-server={}, table={}. Commands are handled by the Paper companion.",
+                    config.bindServer(), config.bindingTable());
         } else {
             logger.info("Netease bind is disabled by netease-bind.yml");
         }
@@ -107,15 +112,6 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to load netease-bind.yml", exception);
         }
-    }
-
-    private void registerCommand() {
-        CommandManager commandManager = proxy.getCommandManager();
-        String[] aliases = config.commandAliases().isEmpty()
-                ? new String[0]
-                : config.commandAliases().split("\\s*,\\s*");
-        CommandMeta meta = commandManager.metaBuilder(config.commandName()).aliases(aliases).build();
-        commandManager.register(meta, new BindCommand());
     }
 
     @Subscribe(order = PostOrder.LATE)
@@ -136,14 +132,14 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             loginExecutor.execute(() -> processGameProfileRequest(event, loginCheck));
         } catch (RejectedExecutionException exception) {
             logger.warn("Netease bind login executor rejected {}", event.getUsername());
-            failJavaOrAllowFloodgate(loginCheck, config.loginTaskRejectedMessage(), "login task rejected");
+            failLogin(loginCheck, config.loginTaskRejectedMessage(), "login task rejected");
         }
     }
 
     private void processGameProfileRequest(GameProfileRequestEvent event, LoginCheck loginCheck) {
         BindingRepository repository = getRepository();
         if (repository == null) {
-            failJavaOrAllowFloodgate(loginCheck, config.bindSystemUnavailableMessage(), "database unavailable");
+            failLogin(loginCheck, config.bindSystemUnavailableMessage(), "database unavailable");
             return;
         }
 
@@ -162,6 +158,12 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
                                 boundJavaUuid, currentUuid);
                     });
                 }
+                GameProfile oldProfile = event.getGameProfile();
+                event.setGameProfile(new GameProfile(
+                        oldProfile.getId(),
+                        oldProfile.getName(),
+                        withNeteaseProfileProperties(oldProfile.getProperties(), EntryType.BEDROCK, null)
+                ));
                 return;
             }
 
@@ -184,8 +186,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             if (onlineBedrockPlayer.isPresent() && !boundJavaByBedrockUuid.containsKey(bedrockUuid)) {
                 Component denyMessage = Component.text("你的绑定基岩账号已在线，不能同时从 Java 入口进入");
                 deniedJavaLogins.put(javaUuid, denyMessage);
-                onlineBedrockPlayer.get().sendMessage(Component.text(
-                        "有人尝试通过绑定的 Java 账号 " + event.getUsername() + " 进入服务器，已被阻止"));
+                sendBoundJavaLoginBlockedNotify(onlineBedrockPlayer.get(), event.getUsername());
                 logger.info("Denied Java login {} because bound Bedrock {} is already online", javaUuid, bedrockUuid);
                 return;
             }
@@ -205,16 +206,20 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
                     ? bedrockProfile.get().displayName()
                     : bedrockProfile.get().name();
             GameProfile oldProfile = event.getGameProfile();
-            event.setGameProfile(new GameProfile(bedrockUuid, bedrockName, oldProfile.getProperties()));
+            event.setGameProfile(new GameProfile(
+                    bedrockUuid,
+                    bedrockName,
+                    withNeteaseProfileProperties(oldProfile.getProperties(), EntryType.BOUND_JAVA, javaUuid)
+            ));
             boundJavaByBedrockUuid.put(bedrockUuid, javaUuid);
             deniedJavaLogins.remove(javaUuid);
             unboundJavaSessions.remove(javaUuid);
         } catch (SQLException exception) {
             logger.error("Failed to process Netease bind login for {}", exception, event.getUsername());
-            failJavaOrAllowFloodgate(loginCheck, config.bindSystemUnavailableMessage(), "database query failed");
+            failLogin(loginCheck, config.bindSystemUnavailableMessage(), "database query failed");
         } catch (RuntimeException exception) {
             logger.error("Unexpected Netease bind login error for {}", exception, event.getUsername());
-            failJavaOrAllowFloodgate(loginCheck, config.bindSystemUnavailableMessage(), "unexpected login check error");
+            failLogin(loginCheck, config.bindSystemUnavailableMessage(), "unexpected login check error");
         } finally {
             completeLoginCheck(loginCheck);
         }
@@ -229,9 +234,11 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             if (repository != null) {
                 return repository;
             }
-            HikariDataSource dataSource = VelocityPlugin.getDataSource();
-            if (dataSource == null) {
-                logRepositoryFailure("Floodgate datasource is not ready. Enable forceusername first.");
+            HikariDataSource dataSource;
+            try {
+                dataSource = VelocityPlugin.requireDataSource();
+            } catch (IllegalStateException exception) {
+                logRepositoryFailure(exception.getMessage());
                 return null;
             }
             try {
@@ -261,26 +268,28 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
         }
         logger.warn("Netease bind login check timed out after {}ms for {}",
                 config.loginCheckTimeoutMillis(), loginCheck.username());
-        failJavaOrAllowFloodgate(loginCheck, config.bindSystemTimeoutMessage(), "login check timeout");
+        failLogin(loginCheck, config.bindSystemTimeoutMessage(), "login check timeout");
     }
 
-    private void failJavaOrAllowFloodgate(LoginCheck loginCheck, String javaMessage, String reason) {
+    private void failLogin(LoginCheck loginCheck, String javaMessage, String reason) {
         if (!loginCheck.isOpen()) {
             return;
         }
-        if (isKnownFloodgatePlayer(loginCheck.originalUuid())) {
-            logger.warn("Allowing Floodgate player {} because {}", loginCheck.originalUuid(), reason);
-            completeLoginCheck(loginCheck);
-            return;
-        }
         deniedJavaLogins.put(loginCheck.originalUuid(), message(javaMessage));
-        logger.warn("Denying Java login {} because {}", loginCheck.originalUuid(), reason);
+        logger.warn("Denying login {} because {}", loginCheck.originalUuid(), reason);
         completeLoginCheck(loginCheck);
     }
 
     private boolean isKnownFloodgatePlayer(UUID uuid) {
+        if (uuid == null) {
+            return false;
+        }
         FloodgatePlayer player = floodgateApi.getPlayerWithoutNeteaseBindFilter(uuid);
-        return player != null;
+        return player != null || floodgateApi.isFloodgateId(uuid) || isLegacyFloodgateUuid(uuid);
+    }
+
+    private static boolean isLegacyFloodgateUuid(UUID uuid) {
+        return uuid != null && uuid.toString().contains(LEGACY_FLOODGATE_UUID_MARKER);
     }
 
     private void completeLoginCheck(LoginCheck loginCheck) {
@@ -315,6 +324,10 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
 
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(event.getData()))) {
             String action = input.readUTF();
+            if ("request_state".equals(action)) {
+                handleStateRequest(serverConnection, input);
+                return;
+            }
             if (!"command".equals(action)) {
                 return;
             }
@@ -327,7 +340,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
                 args[i] = input.readUTF();
             }
             handleCommand(serverConnection.getPlayer(), args);
-        } catch (IOException exception) {
+        } catch (IllegalArgumentException | IOException exception) {
             logger.warn("Failed to read Netease bind plugin message: {}", exception.getMessage());
         }
     }
@@ -338,15 +351,8 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             return;
         }
         Player player = event.getPlayer();
-        EntryType entryType = getEntryType(player.getUniqueId());
-        UUID javaUuid = entryType == EntryType.BOUND_JAVA ? boundJavaByBedrockUuid.get(player.getUniqueId()) : null;
         player.getCurrentServer().ifPresent(connection -> {
-            try {
-                connection.sendPluginMessage(bridgeChannel, createEntryTypePayload(player.getUniqueId(), entryType, javaUuid));
-            } catch (IOException exception) {
-                logger.warn("Failed to send Netease bind entry type for {}: {}",
-                        player.getUsername(), exception.getMessage());
-            }
+            sendNeteaseBindState(player, connection);
         });
     }
 
@@ -414,6 +420,9 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
 
     @Override
     public EntryType getEntryType(UUID playerUuid) {
+        if (playerUuid == null) {
+            return EntryType.UNKNOWN;
+        }
         if (boundJavaByBedrockUuid.containsKey(playerUuid)) {
             return EntryType.BOUND_JAVA;
         }
@@ -425,7 +434,28 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
 
     @Override
     public Optional<UUID> getOriginalJavaUuid(UUID playerUuid) {
+        if (playerUuid == null) {
+            return Optional.empty();
+        }
         return Optional.ofNullable(boundJavaByBedrockUuid.get(playerUuid));
+    }
+
+    private List<Property> withNeteaseProfileProperties(
+            List<Property> originalProperties,
+            EntryType entryType,
+            UUID javaUuid) {
+        List<Property> properties = new ArrayList<>();
+        for (Property property : originalProperties) {
+            if (!NeteaseBindProfileProperties.ENTRY_TYPE.equals(property.getName())
+                    && !NeteaseBindProfileProperties.JAVA_UUID.equals(property.getName())) {
+                properties.add(property);
+            }
+        }
+        properties.add(new Property(NeteaseBindProfileProperties.ENTRY_TYPE, entryType.name(), ""));
+        if (javaUuid != null) {
+            properties.add(new Property(NeteaseBindProfileProperties.JAVA_UUID, javaUuid.toString(), ""));
+        }
+        return properties;
     }
 
     private byte[] createEntryTypePayload(UUID playerUuid, EntryType entryType, UUID javaUuid) throws IOException {
@@ -437,6 +467,63 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             output.writeUTF(javaUuid == null ? "" : javaUuid.toString());
         }
         return bytes.toByteArray();
+    }
+
+    private byte[] createBindPromptStatePayload(UUID playerUuid) throws IOException {
+        boolean unbound = unboundJavaSessions.containsKey(playerUuid);
+        long pendingExpiresAtMillis = unbound ? pendingBinds.activeBindExpiresAtMillis(playerUuid) : 0L;
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (DataOutputStream output = new DataOutputStream(bytes)) {
+            output.writeUTF("bind_prompt_state");
+            output.writeUTF(playerUuid.toString());
+            output.writeBoolean(unbound);
+            output.writeLong(pendingExpiresAtMillis);
+        }
+        return bytes.toByteArray();
+    }
+
+    private void handleStateRequest(ServerConnection serverConnection, DataInputStream input) throws IOException {
+        UUID requestedUuid = UUID.fromString(input.readUTF());
+        Player player = serverConnection.getPlayer();
+        if (!requestedUuid.equals(player.getUniqueId())) {
+            logger.warn("Ignoring Netease bind state request for {} from {}",
+                    requestedUuid, player.getUniqueId());
+            return;
+        }
+        sendNeteaseBindState(player, serverConnection);
+    }
+
+    private void sendNeteaseBindState(Player player, ServerConnection connection) {
+        EntryType entryType = getEntryType(player.getUniqueId());
+        UUID javaUuid = entryType == EntryType.BOUND_JAVA ? boundJavaByBedrockUuid.get(player.getUniqueId()) : null;
+        try {
+            connection.sendPluginMessage(bridgeChannel, createEntryTypePayload(player.getUniqueId(), entryType, javaUuid));
+            connection.sendPluginMessage(bridgeChannel, createBindPromptStatePayload(player.getUniqueId()));
+        } catch (IOException exception) {
+            logger.warn("Failed to send Netease bind state for {}: {}",
+                    player.getUsername(), exception.getMessage());
+        }
+    }
+
+    private void sendBindPromptState(Player player) {
+        player.getCurrentServer().ifPresent(connection -> {
+            try {
+                connection.sendPluginMessage(bridgeChannel, createBindPromptStatePayload(player.getUniqueId()));
+            } catch (IOException exception) {
+                logger.warn("Failed to send Netease bind prompt state for {}: {}",
+                        player.getUsername(), exception.getMessage());
+            }
+        });
+    }
+
+    private void sendBoundJavaLoginBlockedNotify(Player bedrockPlayer, String javaName) {
+        String notifyMessage = config.boundJavaLoginBlockedNotifyMessage();
+        if (notifyMessage == null || notifyMessage.isBlank()) {
+            return;
+        }
+        bedrockPlayer.sendMessage(message(notifyMessage
+                .replace("%java_name%", javaName)
+                .replace("%bedrock_name%", bedrockPlayer.getUsername())));
     }
 
     private void handleCommand(Player player, String[] args) {
@@ -460,6 +547,8 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
                 createJavaBindRequest(player, repository);
             } else if (args.length == 1 && args[0].equalsIgnoreCase("status")) {
                 showStatus(player, repository);
+            } else if (isOnlineCommand(args)) {
+                showOnlinePlayers(player, args);
             } else if (args.length == 2 && args[0].equalsIgnoreCase("unbind") && args[1].equalsIgnoreCase("confirm")) {
                 unbind(player, repository);
             } else if (args.length == 2) {
@@ -467,6 +556,8 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             } else {
                 player.sendMessage(warning("用法: /" + config.commandName() + " 或 /"
                         + config.commandName() + " <Java玩家名> <验证码> 或 /"
+                        + config.commandName() + " status 或 /"
+                        + config.commandName() + " online [玩家名] 或 /"
                         + config.commandName() + " unbind confirm"));
             }
         } catch (SQLException exception) {
@@ -475,6 +566,157 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
         } catch (RuntimeException exception) {
             player.sendMessage(error("账号互通命令处理失败，请联系管理员"));
             logger.error("Unexpected Netease bind command error", exception);
+        }
+    }
+
+    private boolean isOnlineCommand(String[] args) {
+        if (args == null || args.length == 0 || args[0] == null) {
+            return false;
+        }
+        return args[0].equalsIgnoreCase("online")
+                || args[0].equalsIgnoreCase("list")
+                || args[0].equalsIgnoreCase("players");
+    }
+
+    private void showOnlinePlayers(Player requester, String[] args) {
+        if (args.length > 2) {
+            requester.sendMessage(warning("用法: /" + config.commandName() + " online [all|玩家名]"));
+            return;
+        }
+
+        if (args.length == 2 && !"all".equalsIgnoreCase(args[1])) {
+            Optional<Player> target = findOnlinePlayer(args[1]);
+            if (!target.isPresent()) {
+                requester.sendMessage(warning("未找到在线玩家: " + args[1]));
+                return;
+            }
+            sendOnlinePlayerDetail(requester, target.get());
+            return;
+        }
+
+        Collection<Player> onlinePlayers = proxy.getAllPlayers();
+        List<Player> sortedPlayers = new ArrayList<>(onlinePlayers);
+        sortedPlayers.sort((left, right) -> String.CASE_INSENSITIVE_ORDER.compare(
+                left.getUsername(), right.getUsername()));
+
+        int javaCount = 0;
+        int bedrockCount = 0;
+        int boundJavaCount = 0;
+        int unknownCount = 0;
+        int unboundJavaCount = 0;
+        for (Player onlinePlayer : sortedPlayers) {
+            EntryType entryType = getEntryType(onlinePlayer.getUniqueId());
+            switch (entryType) {
+                case JAVA:
+                    javaCount++;
+                    break;
+                case BEDROCK:
+                    bedrockCount++;
+                    break;
+                case BOUND_JAVA:
+                    boundJavaCount++;
+                    break;
+                default:
+                    unknownCount++;
+                    break;
+            }
+            if (unboundJavaSessions.containsKey(onlinePlayer.getUniqueId())) {
+                unboundJavaCount++;
+            }
+        }
+
+        requester.sendMessage(success("在线玩家诊断: 总数=" + onlinePlayers.size()
+                + " Java=" + javaCount
+                + " 基岩=" + bedrockCount
+                + " 绑定Java=" + boundJavaCount
+                + " 未绑定Java引导=" + unboundJavaCount
+                + " 未知=" + unknownCount));
+
+        if (sortedPlayers.isEmpty()) {
+            requester.sendMessage(warning("当前没有在线玩家"));
+            return;
+        }
+
+        Map<String, List<String>> playersByServer = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (Player onlinePlayer : sortedPlayers) {
+            playersByServer.computeIfAbsent(currentServerName(onlinePlayer), key -> new ArrayList<>())
+                    .add(onlinePlayer.getUsername());
+        }
+
+        for (Map.Entry<String, List<String>> entry : playersByServer.entrySet()) {
+            List<String> names = entry.getValue();
+            names.sort(String.CASE_INSENSITIVE_ORDER);
+            requester.sendMessage(plainInfo("[" + entry.getKey() + "] (" + names.size() + "): "
+                    + String.join(", ", names)));
+        }
+    }
+
+    private Optional<Player> findOnlinePlayer(String query) {
+        if (query == null || query.isBlank()) {
+            return Optional.empty();
+        }
+        Optional<Player> direct = proxy.getPlayer(query);
+        if (direct.isPresent()) {
+            return direct;
+        }
+        for (Player onlinePlayer : proxy.getAllPlayers()) {
+            if (onlinePlayer.getUsername().equalsIgnoreCase(query)) {
+                return Optional.of(onlinePlayer);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private void sendOnlinePlayerDetail(Player requester, Player target) {
+        UUID uuid = target.getUniqueId();
+        EntryType entryType = getEntryType(uuid);
+        Optional<UUID> javaUuid = getOriginalJavaUuid(uuid);
+        FloodgatePlayer floodgatePlayer = floodgateApi.getPlayerWithoutNeteaseBindFilter(uuid);
+
+        requester.sendMessage(success("玩家在线诊断: " + target.getUsername()));
+        requester.sendMessage(info("类型: " + formatEntryType(entryType) + " (" + entryType + ")"));
+        requester.sendMessage(info("UUID: " + uuid));
+        requester.sendMessage(info("绑定 Java UUID: " + javaUuid.map(UUID::toString).orElse("-")));
+        requester.sendMessage(info("所在子服: " + currentServerName(target)));
+        requester.sendMessage(info("未绑定 Java 引导: "
+                + (unboundJavaSessions.containsKey(uuid) ? "是" : "否")));
+        requester.sendMessage(info("FloodgatePlayer: " + (floodgatePlayer != null)));
+
+        if (floodgatePlayer == null) {
+            return;
+        }
+        requester.sendMessage(info("DeviceOs=" + floodgatePlayer.getDeviceOs()
+                + " UiProfile=" + floodgatePlayer.getUiProfile()
+                + " InputMode=" + floodgatePlayer.getInputMode()));
+        requester.sendMessage(info("BedrockName=" + floodgatePlayer.getUsername()
+                + " JavaName=" + floodgatePlayer.getJavaUsername()
+                + " CorrectName=" + floodgatePlayer.getCorrectUsername()));
+        requester.sendMessage(info("JavaUUID=" + floodgatePlayer.getJavaUniqueId()
+                + " CorrectUUID=" + floodgatePlayer.getCorrectUniqueId()
+                + " Linked=" + floodgatePlayer.isLinked()
+                + " FromProxy=" + floodgatePlayer.isFromProxy()
+                + " Lang=" + floodgatePlayer.getLanguageCode()));
+    }
+
+    private String currentServerName(Player player) {
+        return player.getCurrentServer()
+                .map(connection -> connection.getServerInfo().getName())
+                .orElse("-");
+    }
+
+    private static String formatEntryType(EntryType entryType) {
+        if (entryType == null) {
+            return "未知";
+        }
+        switch (entryType) {
+            case JAVA:
+                return "Java";
+            case BEDROCK:
+                return "基岩";
+            case BOUND_JAVA:
+                return "绑定Java";
+            default:
+                return "未知";
         }
     }
 
@@ -498,6 +740,7 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
 
         repository.ensureLocalProfile(uuid, player.getUsername(), "pc");
         PendingBind pending = pendingBinds.create(uuid, player.getUsername());
+        sendBindPromptState(player);
         player.sendMessage(success("你的绑定验证码是: " + pending.code()));
         player.sendMessage(success("请让要绑定的基岩玩家在游戏内输入 /"
                 + config.commandName() + " " + player.getUsername() + " " + pending.code()));
@@ -547,13 +790,29 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             player.sendMessage(warning("绑定关系已经存在，请输入 /" + config.commandName() + " status 查看状态"));
             return;
         }
+        unboundJavaSessions.remove(consumed.get().javaUuid());
         player.sendMessage(success("绑定成功: " + consumed.get().javaName() + " -> " + bedrockProfile.get().displayName()));
-        proxy.getPlayer(pending.javaUuid()).ifPresent(javaPlayer ->
-                javaPlayer.disconnect(message(config.kickAfterBindMessage())));
+        proxy.getPlayer(pending.javaUuid()).ifPresent(javaPlayer -> {
+            sendBindPromptState(javaPlayer);
+            javaPlayer.disconnect(message(config.kickAfterBindMessage()));
+        });
     }
 
     private void showStatus(Player player, BindingRepository repository) throws SQLException {
         UUID uuid = player.getUniqueId();
+        UUID onlineJavaUuid = boundJavaByBedrockUuid.get(uuid);
+        if (onlineJavaUuid != null) {
+            player.sendMessage(success("当前身份: 已绑定 Java 玩家，正在使用基岩 UUID 登录"));
+            player.sendMessage(success("绑定 Java UUID: " + onlineJavaUuid));
+            player.sendMessage(success("当前基岩 UUID: " + uuid));
+            Optional<Binding> binding = repository.findBindingByJavaUuid(onlineJavaUuid);
+            if (binding.isPresent()) {
+                Optional<LocalProfile> boundProfile = repository.findLocalProfile(binding.get().bedrockUuid(), "pe");
+                boundProfile.ifPresent(profile -> player.sendMessage(success("绑定基岩账号: " + profile.displayName())));
+            }
+            return;
+        }
+
         Optional<LocalProfile> peProfile = repository.findLocalProfile(uuid, "pe");
         Optional<Binding> bedrockBinding = repository.findBindingByBedrockUuid(uuid);
         if (peProfile.isPresent()) {
@@ -569,13 +828,6 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
 
         Optional<Binding> binding = repository.findBindingByJavaUuid(uuid);
         if (!binding.isPresent()) {
-            UUID javaUuid = boundJavaByBedrockUuid.get(uuid);
-            if (javaUuid != null) {
-                player.sendMessage(success("当前身份: 已绑定 Java 玩家，正在使用基岩 UUID 登录"));
-                player.sendMessage(success("绑定 Java UUID: " + javaUuid));
-                player.sendMessage(success("当前基岩 UUID: " + uuid));
-                return;
-            }
             player.sendMessage(warning("当前身份: Java 玩家，未绑定基岩账号"));
             return;
         }
@@ -617,29 +869,6 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
             }
         });
     }
-    private final class BindCommand implements SimpleCommand {
-        @Override
-        public void execute(Invocation invocation) {
-            CommandSource source = invocation.source();
-            if (!(source instanceof Player)) {
-                source.sendMessage(error("这个命令只能由玩家执行"));
-                return;
-            }
-            handleCommand((Player) source, invocation.arguments());
-        }
-
-        @Override
-        public List<String> suggest(Invocation invocation) {
-            if (invocation.arguments().length == 1) {
-                return java.util.Arrays.asList("status", "unbind");
-            }
-            if (invocation.arguments().length == 2 && invocation.arguments()[0].equalsIgnoreCase("unbind")) {
-                return java.util.Collections.singletonList("confirm");
-            }
-            return java.util.Collections.emptyList();
-        }
-    }
-
     private static Component message(String text) {
         return LEGACY.deserialize(text == null ? "" : text);
     }
@@ -650,6 +879,14 @@ public final class NeteaseBindVelocityService implements NeteaseAccountApi {
 
     private static Component warning(String text) {
         return message(WARNING_PREFIX + text);
+    }
+
+    private static Component info(String text) {
+        return message("&8[&a&l!&8] &7" + text);
+    }
+
+    private static Component plainInfo(String text) {
+        return message("&7" + text);
     }
 
     private static Component error(String text) {

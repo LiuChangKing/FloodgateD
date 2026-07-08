@@ -32,8 +32,6 @@ public enum Permission {
     COMMAND_MAIN("floodgate.command.floodgate", TRUE),
     COMMAND_MAIN_FIREWALL(COMMAND_MAIN, "firewall", OP),
     COMMAND_MAIN_VERSION(COMMAND_MAIN, "version", OP),
-    COMMAND_LINK("floodgate.command.linkaccount", TRUE),
-    COMMAND_UNLINK("floodgate.command.unlinkaccount", TRUE),
     COMMAND_WHITELIST("floodgate.command.fwhitelist", OP),
 
     NEWS_RECEIVE("floodgate.news.receive", OP);

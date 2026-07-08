@@ -6,10 +6,12 @@ website: ${url}
 main: org.geysermc.floodgate.SpigotPlugin
 api-version: 1.13
 folia-supported: true
-softdepend:
-  - DreamEngine
 commands:
   neteasebind:
     description: 梦想之城账号互通命令
     aliases:
       - nbind
+permissions:
+  floodgate.neteasebind.admin:
+    description: 允许查看账号互通在线诊断
+    default: op

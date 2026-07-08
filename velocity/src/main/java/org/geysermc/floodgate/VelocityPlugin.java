@@ -46,11 +46,53 @@ import org.geysermc.floodgate.module.VelocityPlatformModule;
 import org.geysermc.floodgate.util.ReflectionUtils;
 
 public final class VelocityPlugin {
+    private static final String DATABASE_BLOCK_MESSAGE = "账号数据服务未就绪，请联系管理员";
+
     private final FloodgatePlatform platform;
-    private static HikariDataSource dataSource;
+    private static volatile HikariDataSource dataSource;
+    private static volatile String startupBlockReason = DATABASE_BLOCK_MESSAGE;
+    private static volatile String startupBlockDetails = "Floodgate datasource is not initialized";
+    private volatile boolean platformEnabled;
 
     public static HikariDataSource getDataSource() {
         return dataSource;
+    }
+
+    public static HikariDataSource requireDataSource() {
+        HikariDataSource current = dataSource;
+        String reason = startupBlockReason;
+        if (current == null || reason != null || current.isClosed()) {
+            throw new IllegalStateException(startupBlockDetails == null
+                    ? "Floodgate datasource is unavailable"
+                    : startupBlockDetails);
+        }
+        return current;
+    }
+
+    public static String validateDataSourceReady() {
+        String reason = startupBlockReason;
+        if (reason != null) {
+            return reason;
+        }
+
+        HikariDataSource current = dataSource;
+        if (current == null || current.isClosed()) {
+            markDataSourceUnavailable("Floodgate datasource is not initialized");
+            return startupBlockReason;
+        }
+
+        try (Connection connection = current.getConnection()) {
+            if (!connection.isValid(2)) {
+                markDataSourceUnavailable("Floodgate datasource validation failed");
+                closeDataSource(current);
+                return startupBlockReason;
+            }
+            return null;
+        } catch (SQLException exception) {
+            markDataSourceUnavailable("Floodgate datasource is unavailable: " + exception.getMessage());
+            closeDataSource(current);
+            return startupBlockReason;
+        }
     }
 
     @Inject
@@ -72,36 +114,55 @@ public final class VelocityPlugin {
 
     @Subscribe
     public void onProxyInitialization(ProxyInitializeEvent event) {
+        initializeRequiredDataSource();
         platform.enable(
                 new CommandModule(),
                 new VelocityListenerModule(),
                 new VelocityAddonModule(),
                 new PluginMessageModule()
         );
+        platformEnabled = true;
+    }
 
+    private void initializeRequiredDataSource() {
+        if (!platform.isForceUserName()) {
+            markDataSourceUnavailable("forceusername must be true in the Netease build");
+            throw new IllegalStateException(startupBlockDetails);
+        }
 
-        if (platform.isForceUserName()) {
-            dataSource = new HikariDataSource();
-
-            dataSource.setDriverClassName("org.mariadb.jdbc.Driver");
-            dataSource.setJdbcUrl(platform.getMysqlurl());
-            dataSource.setUsername(platform.getMysqluser());
-            dataSource.setPassword(platform.getMysqlpass());
-            try {
-                initializeLocalProfileTable();
-            } catch (SQLException throwables) {
-                throwables.printStackTrace();
-            }
+        HikariDataSource created = new HikariDataSource();
+        try {
+            created.setDriverClassName("org.mariadb.jdbc.Driver");
+            created.setJdbcUrl(platform.getMysqlurl());
+            created.setUsername(platform.getMysqluser());
+            created.setPassword(platform.getMysqlpass());
+            initializeLocalProfileTable(created);
+            dataSource = created;
+            startupBlockDetails = null;
+            startupBlockReason = null;
+        } catch (SQLException | RuntimeException exception) {
+            closeDataSource(created);
+            markDataSourceUnavailable("Failed to initialize required Floodgate datasource: "
+                    + exception.getMessage());
+            throw new IllegalStateException(startupBlockDetails, exception);
         }
     }
 
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
-        platform.disable();
+        if (platformEnabled) {
+            platform.disable();
+            platformEnabled = false;
+        }
+        HikariDataSource current = dataSource;
+        dataSource = null;
+        startupBlockReason = DATABASE_BLOCK_MESSAGE;
+        startupBlockDetails = "Proxy is shutting down";
+        closeDataSource(current);
     }
 
-    private static void initializeLocalProfileTable() throws SQLException {
-        try (Connection connection = dataSource.getConnection();
+    private static void initializeLocalProfileTable(HikariDataSource source) throws SQLException {
+        try (Connection connection = source.getConnection();
              PreparedStatement statement = connection.prepareStatement(
                      "CREATE TABLE IF NOT EXISTS localprofile (" +
                              "id VARCHAR(36) NOT NULL PRIMARY KEY, " +
@@ -110,6 +171,18 @@ public final class VelocityPlugin {
                              "pc_pe VARCHAR(8) NOT NULL" +
                              ")")) {
             statement.executeUpdate();
+        }
+    }
+
+    private static void markDataSourceUnavailable(String details) {
+        dataSource = null;
+        startupBlockDetails = details;
+        startupBlockReason = DATABASE_BLOCK_MESSAGE;
+    }
+
+    private static void closeDataSource(HikariDataSource source) {
+        if (source != null && !source.isClosed()) {
+            source.close();
         }
     }
 }

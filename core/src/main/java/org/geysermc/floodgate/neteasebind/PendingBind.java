@@ -31,4 +31,8 @@ public final class PendingBind {
     public boolean expired(Instant now) {
         return !expiresAt.isAfter(now);
     }
+
+    public long expiresAtMillis() {
+        return expiresAt.toEpochMilli();
+    }
 }
