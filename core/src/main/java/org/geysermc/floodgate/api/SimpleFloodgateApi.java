@@ -117,12 +117,29 @@ public class SimpleFloodgateApi implements FloodgateApi {
 
     @Override
     public boolean sendForm(UUID uuid, Form form) {
-        return pluginMessageManager.getChannel(FormChannel.class).sendForm(uuid, form);
+        FloodgatePlayer player = getPlayer(uuid);
+        // Before this check was added, we used to just send the form to the user no matter if they
+        // were a FloodgatePlayer or not. Keep this since the Floodgate API is deprecated anyway.
+        if (player == null) {
+            return true;
+        }
+        return pluginMessageManager.getChannel(FormChannel.class).sendForm(player, form);
     }
 
     @Override
     public boolean sendForm(UUID uuid, FormBuilder<?, ?, ?> formBuilder) {
         return sendForm(uuid, formBuilder.build());
+    }
+
+    @Override
+    public boolean closeForm(UUID uuid) {
+        FloodgatePlayer player = getPlayer(uuid);
+        // Before this check was added, we used to just send the form to the user no matter if they
+        // were a FloodgatePlayer or not. Keep this since the Floodgate API is deprecated anyway.
+        if (player == null) {
+            return true;
+        }
+        return pluginMessageManager.getChannel(FormChannel.class).closeForm(player);
     }
 
     @Override
@@ -200,8 +217,6 @@ public class SimpleFloodgateApi implements FloodgateApi {
     }
 
     public void playerRemoved(UUID correctUuid) {
-        // Notify the FormChannel that the player has been removed
-        pluginMessageManager.getChannel(FormChannel.class).playerRemoved(correctUuid);
         // we can remove the player directly if it is a Floodgate UUID.
         // since it's stored by their Floodgate UUID
         if (isFloodgateId(correctUuid)) {
@@ -214,7 +229,7 @@ public class SimpleFloodgateApi implements FloodgateApi {
         }
     }
 
-    private FloodgatePlayer getPendingRemovePlayer(UUID correctUuid) {
+    public FloodgatePlayer getPendingRemovePlayer(UUID correctUuid) {
         for (FloodgatePlayer player : pendingRemove.asMap().values()) {
             if (player.getCorrectUniqueId().equals(correctUuid)) {
                 return player;

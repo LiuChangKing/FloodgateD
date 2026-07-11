@@ -57,6 +57,8 @@ import org.geysermc.floodgate.api.ProxyFloodgateApi;
 import org.geysermc.floodgate.api.logger.FloodgateLogger;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
 import org.geysermc.floodgate.config.ProxyFloodgateConfig;
+import org.geysermc.floodgate.pluginmessage.channel.FormChannel;
+import org.geysermc.floodgate.skin.SkinDataImpl;
 import org.geysermc.floodgate.util.Constants;
 import org.geysermc.floodgate.util.LanguageManager;
 import org.geysermc.floodgate.util.MojangUtils;
@@ -116,6 +118,7 @@ public final class VelocityListener {
 
     @Inject
     private MojangUtils mojangUtils;
+    @Inject private FormChannel formChannel;
 
     @Subscribe(order = PostOrder.EARLY)
     public void onPreLogin(PreLoginEvent event) {
@@ -156,7 +159,8 @@ public final class VelocityListener {
     public void onGameProfileRequest(GameProfileRequestEvent event, Continuation continuation) {
         FloodgatePlayer player = playerCache.getIfPresent(event.getConnection());
         if (player == null) {
-            String rename = VelocityRenameUtil.lookupName(event.getGameProfile().getId(), event.getUsername(),"pc");
+            String rename = VelocityRenameUtil.lookupName(
+                    event.getGameProfile().getId(), event.getUsername(), "pc");
             if (rename != null && !rename.equals(event.getUsername())) {
                 event.setGameProfile(new GameProfile(
                         event.getGameProfile().getId(),
@@ -166,20 +170,42 @@ public final class VelocityListener {
             }
             continuation.resume();
             return;
-        } else {
-            String rename = VelocityRenameUtil.lookupName(player.getCorrectUniqueId(), player.getCorrectUsername(),"pe");
-            if (rename == null || rename.isBlank()) {
-                rename = player.getCorrectUsername();
-            }
-            event.setGameProfile(new GameProfile(
-                    player.getCorrectUniqueId(),
-                    rename,
-                    List.of(DEFAULT_TEXTURE_PROPERTY)
-            ));
-            playerCache.invalidate(event.getConnection());
-            continuation.resume();
+        }
+        playerCache.invalidate(event.getConnection());
+
+        String renamedUsername = VelocityRenameUtil.lookupName(
+                player.getCorrectUniqueId(), player.getCorrectUsername(), "pe");
+        if (renamedUsername == null || renamedUsername.isBlank()) {
+            renamedUsername = player.getCorrectUsername();
         }
 
+        // Skin look up (on Spigot and friends) would result in it failing, so apply a default skin
+        if (!player.isLinked()) {
+            event.setGameProfile(new GameProfile(
+                    player.getCorrectUniqueId(),
+                    renamedUsername,
+                    List.of(DEFAULT_TEXTURE_PROPERTY)
+            ));
+            continuation.resume();
+            return;
+        }
+
+        // Floodgate players are seen as offline mode players, meaning we have to look up
+        // the linked player's textures ourselves
+
+        String finalUsername = renamedUsername;
+        mojangUtils.skinFor(player.getCorrectUniqueId())
+                .exceptionally(exception -> {
+                    logger.debug("Unexpected skin fetch error for " + player.getCorrectUniqueId(), exception);
+                    return SkinDataImpl.DEFAULT_SKIN;
+                }).thenAccept(skin -> {
+                    event.setGameProfile(new GameProfile(
+                            player.getCorrectUniqueId(),
+                            finalUsername,
+                            List.of(new Property("textures", skin.value(), skin.signature()))
+                    ));
+                    continuation.resume();
+                });
     }
 
     @Subscribe(order = PostOrder.LAST)
@@ -194,6 +220,11 @@ public final class VelocityListener {
 
     @Subscribe(order = PostOrder.LAST)
     public void onDisconnect(DisconnectEvent event) {
+        FloodgatePlayer player = api.getPendingRemovePlayer(event.getPlayer().getUniqueId());
+        if (player != null) {
+            formChannel.disconnect(player);
+        }
+
         api.playerRemoved(event.getPlayer().getUniqueId());
     }
 }
