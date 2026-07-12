@@ -13,12 +13,10 @@ public final class NeteaseAccountConfig {
     private static final String CONFIG_FILE_NAME = "netease-account.yml";
     private static final String COMMAND_NAME = "neteaseaccount";
     private static final String COMMAND_ALIASES = "neteasebind,naccount,nbind";
-    private static final String SUCCESS_PREFIX = "&8[&a&l!&8] &a";
     private static final String WARNING_PREFIX = "&8[&e&l!&8] &e";
     private static final String ERROR_PREFIX = "&8[&c&l!&8] &c";
 
     private final boolean enabled;
-    private final String unresolvedJavaServer;
     private final String accountTable;
     private final long uidQueryTimeoutMillis;
     private final long loginCheckTimeoutMillis;
@@ -29,16 +27,14 @@ public final class NeteaseAccountConfig {
     private final String unresolvedJavaTitle;
     private final String unresolvedJavaNotify;
     private final String unresolvedJavaSubtitle;
-    private final String unresolvedRedirectMessage;
+    private final List<String> unresolvedJavaKickLines;
     private final String linkedJavaLoginBlockedNotifyMessage;
-    private final String resolvedJavaKickMessage;
     private final String accountSystemUnavailableMessage;
     private final String accountSystemTimeoutMessage;
     private final String loginTaskRejectedMessage;
 
     public NeteaseAccountConfig(
             boolean enabled,
-            String unresolvedJavaServer,
             String accountTable,
             long uidQueryTimeoutMillis,
             long loginCheckTimeoutMillis,
@@ -49,14 +45,12 @@ public final class NeteaseAccountConfig {
             String unresolvedJavaTitle,
             String unresolvedJavaNotify,
             String unresolvedJavaSubtitle,
-            String unresolvedRedirectMessage,
+            List<String> unresolvedJavaKickLines,
             String linkedJavaLoginBlockedNotifyMessage,
-            String resolvedJavaKickMessage,
             String accountSystemUnavailableMessage,
             String accountSystemTimeoutMessage,
             String loginTaskRejectedMessage) {
         this.enabled = enabled;
-        this.unresolvedJavaServer = unresolvedJavaServer;
         this.accountTable = accountTable;
         this.uidQueryTimeoutMillis = uidQueryTimeoutMillis;
         this.loginCheckTimeoutMillis = loginCheckTimeoutMillis;
@@ -67,9 +61,8 @@ public final class NeteaseAccountConfig {
         this.unresolvedJavaTitle = unresolvedJavaTitle;
         this.unresolvedJavaNotify = unresolvedJavaNotify;
         this.unresolvedJavaSubtitle = unresolvedJavaSubtitle;
-        this.unresolvedRedirectMessage = unresolvedRedirectMessage;
+        this.unresolvedJavaKickLines = new ArrayList<>(unresolvedJavaKickLines);
         this.linkedJavaLoginBlockedNotifyMessage = linkedJavaLoginBlockedNotifyMessage;
-        this.resolvedJavaKickMessage = resolvedJavaKickMessage;
         this.accountSystemUnavailableMessage = accountSystemUnavailableMessage;
         this.accountSystemTimeoutMessage = accountSystemTimeoutMessage;
         this.loginTaskRejectedMessage = loginTaskRejectedMessage;
@@ -94,15 +87,8 @@ public final class NeteaseAccountConfig {
                 "messages.unresolved-java-notify",
                 WARNING_PREFIX + "请使用同一网易账号的基岩版进入本服一次，完成后重新使用 Java 版进入。"
         );
-        String unresolvedJavaServer = getScalar(
-                values,
-                "unresolved-java-server",
-                getScalar(values, "bind-server", "neteasebind_login")
-        ).trim();
-
         return new NeteaseAccountConfig(
                 Boolean.parseBoolean(getScalar(values, "enabled", "true").trim()),
-                unresolvedJavaServer,
                 getScalar(values, "account.table", "netease_account_profile").trim(),
                 uidTimeout,
                 loginTimeout,
@@ -121,16 +107,13 @@ public final class NeteaseAccountConfig {
                 getScalar(values, "messages.unresolved-java-title", "请先用基岩版进入一次"),
                 notify,
                 getScalar(values, "messages.unresolved-java-subtitle", "请使用同一网易账号的基岩版进入本服一次"),
-                getScalar(values, "messages.unresolved-java-redirect",
-                        WARNING_PREFIX + "请先使用同一网易账号的基岩版进入本服一次"),
+                getList(values, "messages.unresolved-java-kick", defaultUnresolvedJavaKickLines()),
                 getScalar(
                         values,
                         "messages.linked-java-login-blocked-notify",
                         getScalar(values, "messages.bound-java-login-blocked-notify",
                                 WARNING_PREFIX + "您关联的 Java 账号 %java_name% 进入服务器，已被阻止。")
                 ),
-                getScalar(values, "messages.resolved-java-kick",
-                        SUCCESS_PREFIX + "已检测到基岩档案，请重新使用 Java 版进入服务器"),
                 getScalar(
                         values,
                         "messages.account-system-unavailable",
@@ -277,6 +260,30 @@ public final class NeteaseAccountConfig {
         return list == null || list.isEmpty() ? fallback : list.get(0);
     }
 
+    private static List<String> getList(
+            Map<String, List<String>> values,
+            String key,
+            List<String> fallback) {
+        List<String> list = values.get(key);
+        return list == null || list.isEmpty() ? fallback : new ArrayList<>(list);
+    }
+
+    private static List<String> defaultUnresolvedJavaKickLines() {
+        List<String> lines = new ArrayList<>();
+        lines.add("&8&m--------------------------------");
+        lines.add("&e&l账号互通需要初始化");
+        lines.add("");
+        lines.add("&f检测到您尚未使用基岩版进入过本服务器。");
+        lines.add("&f请先使用以下任一客户端进入本服一次：");
+        lines.add("&a1. 网易基岩互通版");
+        lines.add("&a2. 手机《我的世界》");
+        lines.add("");
+        lines.add("&7请务必使用与当前 Java 版相同的网易账号。");
+        lines.add("&7基岩版成功进入后，即可退出并重新使用 Java 版登录。");
+        lines.add("&8&m--------------------------------");
+        return lines;
+    }
+
     private static List<String> singletonList(String value) {
         List<String> list = new ArrayList<>();
         list.add(value);
@@ -286,7 +293,6 @@ public final class NeteaseAccountConfig {
     private static String defaultConfigText() {
         return "# 梦想之城网易账号自动互通配置\n\n"
                 + "enabled: true\n"
-                + "unresolved-java-server: neteasebind_login\n"
                 + "uid-query-timeout-millis: 10000\n"
                 + "login-check-timeout-millis: 15000\n"
                 + "bootstrap-localprofile-on-startup: true\n\n"
@@ -304,11 +310,21 @@ public final class NeteaseAccountConfig {
                 + "  unresolved-java-notify: \"" + WARNING_PREFIX
                 + "请使用同一网易账号的基岩版进入本服一次，完成后重新使用 Java 版进入。\"\n"
                 + "  unresolved-java-subtitle: \"请使用同一网易账号的基岩版进入本服一次\"\n"
-                + "  unresolved-java-redirect: \"" + WARNING_PREFIX
-                + "请先使用同一网易账号的基岩版进入本服一次\"\n"
+                + "  # Java 尚无基岩档案时，由 Velocity 在登录阶段直接断开并显示以下内容\n"
+                + "  unresolved-java-kick:\n"
+                + "    - \"&8&m--------------------------------\"\n"
+                + "    - \"&e&l账号互通需要初始化\"\n"
+                + "    - \"\"\n"
+                + "    - \"&f检测到您尚未使用基岩版进入过本服务器。\"\n"
+                + "    - \"&f请先使用以下任一客户端进入本服一次：\"\n"
+                + "    - \"&a1. 网易基岩互通版\"\n"
+                + "    - \"&a2. 手机《我的世界》\"\n"
+                + "    - \"\"\n"
+                + "    - \"&7请务必使用与当前 Java 版相同的网易账号。\"\n"
+                + "    - \"&7基岩版成功进入后，即可退出并重新使用 Java 版登录。\"\n"
+                + "    - \"&8&m--------------------------------\"\n"
                 + "  linked-java-login-blocked-notify: \"" + WARNING_PREFIX
                 + "您关联的 Java 账号 %java_name% 进入服务器，已被阻止。\"\n"
-                + "  resolved-java-kick: \"" + SUCCESS_PREFIX + "已检测到基岩档案，请重新使用 Java 版进入服务器\"\n"
                 + "  account-system-unavailable: \"" + ERROR_PREFIX + "账号互通服务暂时不可用，请稍后重试\"\n"
                 + "  account-system-timeout: \"" + ERROR_PREFIX + "账号互通验证响应超时，请稍后重试\"\n"
                 + "  login-task-rejected: \"" + ERROR_PREFIX + "账号互通服务繁忙，请稍后重试\"\n";
@@ -316,10 +332,6 @@ public final class NeteaseAccountConfig {
 
     public boolean enabled() {
         return enabled;
-    }
-
-    public String unresolvedJavaServer() {
-        return unresolvedJavaServer;
     }
 
     public String commandName() {
@@ -370,16 +382,12 @@ public final class NeteaseAccountConfig {
         return unresolvedJavaSubtitle;
     }
 
-    public String unresolvedRedirectMessage() {
-        return unresolvedRedirectMessage;
+    public String unresolvedJavaKickMessage() {
+        return String.join("\n", unresolvedJavaKickLines);
     }
 
     public String linkedJavaLoginBlockedNotifyMessage() {
         return linkedJavaLoginBlockedNotifyMessage;
-    }
-
-    public String resolvedJavaKickMessage() {
-        return resolvedJavaKickMessage;
     }
 
     public String accountSystemUnavailableMessage() {

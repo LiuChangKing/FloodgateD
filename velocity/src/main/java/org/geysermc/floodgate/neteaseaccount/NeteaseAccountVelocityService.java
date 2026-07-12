@@ -10,14 +10,12 @@ import com.velocitypowered.api.event.connection.LoginEvent;
 import com.velocitypowered.api.event.connection.PluginMessageEvent;
 import com.velocitypowered.api.event.player.GameProfileRequestEvent;
 import com.velocitypowered.api.event.player.ServerConnectedEvent;
-import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
-import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.api.util.GameProfile.Property;
 import com.zaxxer.hikari.HikariDataSource;
@@ -73,8 +71,6 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
     private final Map<UUID, UUID> boundJavaByBedrockUuid = new ConcurrentHashMap<>();
     private final Map<UUID, Long> javaUidByBedrockUuid = new ConcurrentHashMap<>();
     private final Map<UUID, Long> bedrockUidByPlayerUuid = new ConcurrentHashMap<>();
-    private final Map<UUID, Long> unresolvedJavaUidByJavaUuid = new ConcurrentHashMap<>();
-    private final Map<UUID, Boolean> unresolvedJavaSessions = new ConcurrentHashMap<>();
     private final Map<UUID, Component> deniedJavaLogins = new ConcurrentHashMap<>();
     private final ExecutorService loginExecutor = Executors.newFixedThreadPool(4, new NamedThreadFactory("NeteaseAccount-Login-"));
     private final ExecutorService commandExecutor = Executors.newFixedThreadPool(2, new NamedThreadFactory("NeteaseAccount-Command-"));
@@ -101,8 +97,8 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
             }
             proxy.getChannelRegistrar().register(bridgeChannel);
             NeteaseAccountBridge.setInstance(this);
-            logger.info("Netease account auto-unify enabled. unresolved-java-server={}, table={}.",
-                    config.unresolvedJavaServer(), config.accountTable());
+            logger.info("Netease account auto-unify enabled. unresolved Java logins are blocked at proxy, table={}.",
+                    config.accountTable());
             if (config.bootstrapLocalProfileOnStartup()) {
                 commandExecutor.execute(this::bootstrapLocalProfiles);
             }
@@ -198,7 +194,6 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
             logger.info("Updated Bedrock Netease profile: uuid={}, uid={}, xuid={}, source={}",
                     bedrockUuid, bedrockUid.getAsLong(), xuid,
                     forwardedBedrockUid.isPresent() ? "geyser-forwarded" : "uid-from-uuid");
-            disconnectResolvedUnresolvedJavaSessions(bedrockUid.getAsLong(), bedrockUuid);
         } else {
             logger.warn("Bedrock player {} ({}) entered, but Netease uid-from-uuid returned no uid. "
                     + "Java auto-unify will not be available until this profile is updated.",
@@ -211,9 +206,6 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
             proxy.getPlayer(bedrockUuid).ifPresent(existingPlayer -> existingPlayer.disconnect(
                     Component.text("你的基岩账号已从基岩端登录，Java 入口会话已下线")));
         }
-        unresolvedJavaSessions.remove(bedrockUuid);
-        unresolvedJavaUidByJavaUuid.remove(bedrockUuid);
-
         GameProfile oldProfile = event.getGameProfile();
         event.setGameProfile(new GameProfile(
                 oldProfile.getId(),
@@ -225,28 +217,6 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
                         null,
                         bedrockUid.isPresent() ? bedrockUid.getAsLong() : null)
         ));
-    }
-
-    private void disconnectResolvedUnresolvedJavaSessions(long bedrockUid, UUID bedrockUuid) {
-        List<UUID> resolvedJavaUuids = new ArrayList<>();
-        for (UUID javaUuid : unresolvedJavaSessions.keySet()) {
-            Long expectedBedrockUid = bedrockUidByPlayerUuid.get(javaUuid);
-            if (expectedBedrockUid != null && expectedBedrockUid == bedrockUid) {
-                resolvedJavaUuids.add(javaUuid);
-            }
-        }
-
-        for (UUID javaUuid : resolvedJavaUuids) {
-            unresolvedJavaSessions.remove(javaUuid);
-            unresolvedJavaUidByJavaUuid.remove(javaUuid);
-            bedrockUidByPlayerUuid.remove(javaUuid);
-            proxy.getPlayer(javaUuid).ifPresent(javaPlayer -> {
-                javaPlayer.disconnect(message(config.resolvedJavaKickMessage()));
-                logger.info("Disconnected unresolved Java session {} because Bedrock uuid {} "
-                                + "completed the first-entry account profile for uid={}",
-                        javaUuid, bedrockUuid, bedrockUid);
-            });
-        }
     }
 
     private void processJavaLogin(
@@ -270,7 +240,7 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
         }
 
         if (!accountProfile.isPresent()) {
-            markUnresolvedJava(event, repository, javaUuid, javaUid.getAsLong(), bedrockUid);
+            denyUnresolvedJava(event, javaUuid, javaUid.getAsLong(), bedrockUid, "Bedrock profile not found");
             return;
         }
 
@@ -292,7 +262,7 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
         if (!bedrockLocalProfile.isPresent()) {
             logger.warn("Netease account profile uid={} points to Bedrock uuid {}, but localprofile has no PE record",
                     bedrockUid, bedrockUuid);
-            markUnresolvedJava(event, repository, javaUuid, javaUid.getAsLong(), bedrockUid);
+            denyUnresolvedJava(event, javaUuid, javaUid.getAsLong(), bedrockUid, "Bedrock localprofile not found");
             return;
         }
 
@@ -312,38 +282,22 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
         boundJavaByBedrockUuid.put(bedrockUuid, javaUuid);
         javaUidByBedrockUuid.put(bedrockUuid, javaUid.getAsLong());
         bedrockUidByPlayerUuid.put(bedrockUuid, bedrockUid);
-        unresolvedJavaSessions.remove(javaUuid);
-        unresolvedJavaUidByJavaUuid.remove(javaUuid);
         deniedJavaLogins.remove(javaUuid);
         logger.info("Auto-unified Java login: javaName={}, javaUuid={}, javaUid={}, bedrockUid={}, "
                         + "bedrockUuid={}, finalName={}",
                 event.getUsername(), javaUuid, javaUid.getAsLong(), bedrockUid, bedrockUuid, finalName);
     }
 
-    private void markUnresolvedJava(
+    private void denyUnresolvedJava(
             GameProfileRequestEvent event,
-            NeteaseAccountRepository repository,
             UUID javaUuid,
             long javaUid,
-            long bedrockUid) throws SQLException {
-        unresolvedJavaSessions.put(javaUuid, Boolean.TRUE);
-        unresolvedJavaUidByJavaUuid.put(javaUuid, javaUid);
-        bedrockUidByPlayerUuid.put(javaUuid, bedrockUid);
-        repository.ensureLocalProfile(javaUuid, event.getUsername(), "pc");
-
-        GameProfile oldProfile = event.getGameProfile();
-        event.setGameProfile(new GameProfile(
-                javaUuid,
-                oldProfile.getName(),
-                withNeteaseProfileProperties(
-                        oldProfile.getProperties(),
-                        EntryType.UNRESOLVED_JAVA,
-                        javaUuid,
-                        javaUid,
-                        bedrockUid)
-        ));
-        logger.info("Java login needs Bedrock first-entry: javaName={}, javaUuid={}, javaUid={}, bedrockUid={}",
-                event.getUsername(), javaUuid, javaUid, bedrockUid);
+            long bedrockUid,
+            String reason) {
+        deniedJavaLogins.put(javaUuid, message(config.unresolvedJavaKickMessage()));
+        logger.info("Denied unresolved Java login at proxy: javaName={}, javaUuid={}, javaUid={}, "
+                        + "bedrockUid={}, reason={}",
+                event.getUsername(), javaUuid, javaUid, bedrockUid, reason);
     }
 
     private OptionalLong queryUid(NeteaseAccountConfig.UidEndpoint endpoint, UUID uuid, String side) {
@@ -548,41 +502,10 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
         player.getCurrentServer().ifPresent(connection -> sendNeteaseAccountState(player, connection));
     }
 
-    @Subscribe(order = PostOrder.EARLY)
-    public void onServerPreConnect(ServerPreConnectEvent event) {
-        if (!config.enabled()) {
-            return;
-        }
-        Player player = event.getPlayer();
-        UUID playerUuid = player.getUniqueId();
-        if (!unresolvedJavaSessions.containsKey(playerUuid)) {
-            return;
-        }
-
-        RegisteredServer original = event.getOriginalServer();
-        if (original.getServerInfo().getName().equalsIgnoreCase(config.unresolvedJavaServer())) {
-            return;
-        }
-
-        Optional<RegisteredServer> unresolvedJavaServer = proxy.getServer(config.unresolvedJavaServer());
-        if (unresolvedJavaServer.isPresent()) {
-            player.sendMessage(message(config.unresolvedRedirectMessage()));
-            event.setResult(ServerPreConnectEvent.ServerResult.allowed(unresolvedJavaServer.get()));
-        } else {
-            player.disconnect(Component.text("账号引导服不存在: " + config.unresolvedJavaServer()));
-            event.setResult(ServerPreConnectEvent.ServerResult.denied());
-        }
-    }
-
     @Subscribe
     public void onDisconnect(DisconnectEvent event) {
         UUID uuid = event.getPlayer().getUniqueId();
-        UUID javaUuid = boundJavaByBedrockUuid.remove(uuid);
-        if (javaUuid != null) {
-            unresolvedJavaUidByJavaUuid.remove(javaUuid);
-        }
-        unresolvedJavaSessions.remove(uuid);
-        unresolvedJavaUidByJavaUuid.remove(uuid);
+        boundJavaByBedrockUuid.remove(uuid);
         javaUidByBedrockUuid.remove(uuid);
         bedrockUidByPlayerUuid.remove(uuid);
         deniedJavaLogins.remove(uuid);
@@ -614,8 +537,6 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
         boundJavaByBedrockUuid.clear();
         javaUidByBedrockUuid.clear();
         bedrockUidByPlayerUuid.clear();
-        unresolvedJavaUidByJavaUuid.clear();
-        unresolvedJavaSessions.clear();
         deniedJavaLogins.clear();
     }
 
@@ -627,9 +548,6 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
         if (boundJavaByBedrockUuid.containsKey(playerUuid)) {
             return EntryType.BOUND_JAVA;
         }
-        if (unresolvedJavaSessions.containsKey(playerUuid)) {
-            return EntryType.UNRESOLVED_JAVA;
-        }
         if (isKnownFloodgatePlayer(playerUuid)) {
             return EntryType.BEDROCK;
         }
@@ -640,9 +558,6 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
     public Optional<UUID> getOriginalJavaUuid(UUID playerUuid) {
         if (playerUuid == null) {
             return Optional.empty();
-        }
-        if (unresolvedJavaSessions.containsKey(playerUuid)) {
-            return Optional.of(playerUuid);
         }
         return Optional.ofNullable(boundJavaByBedrockUuid.get(playerUuid));
     }
@@ -656,8 +571,7 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
         if (boundJavaUid != null) {
             return OptionalLong.of(boundJavaUid);
         }
-        Long unresolvedJavaUid = unresolvedJavaUidByJavaUuid.get(playerUuid);
-        return unresolvedJavaUid == null ? OptionalLong.empty() : OptionalLong.of(unresolvedJavaUid);
+        return OptionalLong.empty();
     }
 
     @Override
@@ -716,12 +630,11 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
     }
 
     private byte[] createAccountPromptStatePayload(UUID playerUuid) throws IOException {
-        boolean unresolved = unresolvedJavaSessions.containsKey(playerUuid);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (DataOutputStream output = new DataOutputStream(bytes)) {
             output.writeUTF("account_prompt_state");
             output.writeUTF(playerUuid.toString());
-            output.writeBoolean(unresolved);
+            output.writeBoolean(false);
             output.writeLong(0L);
         }
         return bytes.toByteArray();
@@ -743,7 +656,7 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
         EntryType entryType = getEntryType(playerUuid);
         UUID javaUuid = entryType == EntryType.BOUND_JAVA
                 ? boundJavaByBedrockUuid.get(playerUuid)
-                : entryType == EntryType.UNRESOLVED_JAVA ? playerUuid : null;
+                : null;
         Long javaUid = nullableOptional(getOriginalJavaUid(playerUuid));
         Long bedrockUid = nullableOptional(getBedrockUid(playerUuid));
         try {
@@ -916,8 +829,7 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi {
         requester.sendMessage(info("Java UID: " + formatOptionalLong(javaUid)));
         requester.sendMessage(info("Bedrock UID: " + formatOptionalLong(bedrockUid)));
         requester.sendMessage(info("所在子服: " + currentServerName(target)));
-        requester.sendMessage(info("等待基岩首次进入: "
-                + (unresolvedJavaSessions.containsKey(uuid) ? "是" : "否")));
+        requester.sendMessage(info("代理账号检查: 已通过"));
         requester.sendMessage(info("FloodgatePlayer: " + (floodgatePlayer != null)));
 
         if (floodgatePlayer == null) {
