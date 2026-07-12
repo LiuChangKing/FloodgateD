@@ -276,7 +276,7 @@ public final class NeteaseAccountConfig {
         lines.add("&f检测到您尚未使用基岩版进入过本服务器。");
         lines.add("&f请先使用以下任一客户端进入本服一次：");
         lines.add("&a1. 网易基岩互通版");
-        lines.add("&a2. 手机《我的世界》");
+        lines.add("&a2. 网易手游我的世界");
         lines.add("");
         lines.add("&7请务必使用与当前 Java 版相同的网易账号。");
         lines.add("&7基岩版成功进入后，即可退出并重新使用 Java 版登录。");
@@ -318,7 +318,7 @@ public final class NeteaseAccountConfig {
                 + "    - \"&f检测到您尚未使用基岩版进入过本服务器。\"\n"
                 + "    - \"&f请先使用以下任一客户端进入本服一次：\"\n"
                 + "    - \"&a1. 网易基岩互通版\"\n"
-                + "    - \"&a2. 手机《我的世界》\"\n"
+                + "    - \"&a2. 网易手游我的世界\"\n"
                 + "    - \"\"\n"
                 + "    - \"&7请务必使用与当前 Java 版相同的网易账号。\"\n"
                 + "    - \"&7基岩版成功进入后，即可退出并重新使用 Java 版登录。\"\n"
