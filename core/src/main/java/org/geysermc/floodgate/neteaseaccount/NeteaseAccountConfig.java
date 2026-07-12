@@ -271,14 +271,15 @@ public final class NeteaseAccountConfig {
     private static List<String> defaultUnresolvedJavaKickLines() {
         List<String> lines = new ArrayList<>();
         lines.add("&8&m--------------------------------");
-        lines.add("&6&l账号互通需要初始化");
+        lines.add("&e&l账号互通需要初始化");
         lines.add("");
-        lines.add("&7检测到您的网易账号尚未在本服建立 &b基岩版档案&7。");
-        lines.add("&f请使用 &e相同的网易账号&f，通过以下任一客户端进入本服一次：");
-        lines.add("&a1. &b网易基岩互通版");
-        lines.add("&a2. &b网易手游我的世界");
+        lines.add("&f检测到您尚未使用基岩版进入过本服务器。");
+        lines.add("&f请先使用以下任一客户端进入本服一次：");
+        lines.add("&a1. 网易基岩互通版");
+        lines.add("&a2. 网易手游我的世界");
         lines.add("");
-        lines.add("&7基岩版成功进入后请退出，再重新使用 &eJava 版&7登录。");
+        lines.add("&7请务必使用与当前 Java 版相同的网易账号。");
+        lines.add("&7基岩版成功进入后，即可退出并重新使用 Java 版登录。");
         lines.add("&8&m--------------------------------");
         return lines;
     }
@@ -312,14 +313,15 @@ public final class NeteaseAccountConfig {
                 + "  # Java 尚无基岩档案时，由 Velocity 在登录阶段直接断开并显示以下内容\n"
                 + "  unresolved-java-kick:\n"
                 + "    - \"&8&m--------------------------------\"\n"
-                + "    - \"&6&l账号互通需要初始化\"\n"
+                + "    - \"&e&l账号互通需要初始化\"\n"
                 + "    - \"\"\n"
-                + "    - \"&7检测到您的网易账号尚未在本服建立 &b基岩版档案&7。\"\n"
-                + "    - \"&f请使用 &e相同的网易账号&f，通过以下任一客户端进入本服一次：\"\n"
-                + "    - \"&a1. &b网易基岩互通版\"\n"
-                + "    - \"&a2. &b网易手游我的世界\"\n"
+                + "    - \"&f检测到您尚未使用基岩版进入过本服务器。\"\n"
+                + "    - \"&f请先使用以下任一客户端进入本服一次：\"\n"
+                + "    - \"&a1. 网易基岩互通版\"\n"
+                + "    - \"&a2. 网易手游我的世界\"\n"
                 + "    - \"\"\n"
-                + "    - \"&7基岩版成功进入后请退出，再重新使用 &eJava 版&7登录。\"\n"
+                + "    - \"&7请务必使用与当前 Java 版相同的网易账号。\"\n"
+                + "    - \"&7基岩版成功进入后，即可退出并重新使用 Java 版登录。\"\n"
                 + "    - \"&8&m--------------------------------\"\n"
                 + "  linked-java-login-blocked-notify: \"" + WARNING_PREFIX
                 + "您关联的 Java 账号 %java_name% 进入服务器，已被阻止。\"\n"
