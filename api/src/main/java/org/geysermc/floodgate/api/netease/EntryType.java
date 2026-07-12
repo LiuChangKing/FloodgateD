@@ -4,5 +4,6 @@ public enum EntryType {
     JAVA,
     BEDROCK,
     BOUND_JAVA,
+    UNRESOLVED_JAVA,
     UNKNOWN
 }

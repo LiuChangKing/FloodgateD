@@ -28,6 +28,7 @@ package org.geysermc.floodgate.player;
 import static org.geysermc.floodgate.player.FloodgateHandshakeHandler.ResultType.INVALID_DATA_LENGTH;
 import static org.geysermc.floodgate.player.FloodgateHandshakeHandler.ResultType.NOT_FLOODGATE_DATA;
 import static org.geysermc.floodgate.util.BedrockData.EXPECTED_LENGTH;
+import static org.geysermc.floodgate.util.BedrockData.MXZC_EXPECTED_LENGTH;
 
 import com.google.common.base.Charsets;
 import io.netty.channel.Channel;
@@ -152,7 +153,8 @@ public final class FloodgateHandshakeHandler {
             try {
                 BedrockData bedrockData = BedrockData.fromString(decrypted);
 
-                if (bedrockData.getDataLength() != EXPECTED_LENGTH) {
+                if (bedrockData.getDataLength() != EXPECTED_LENGTH
+                        && bedrockData.getDataLength() != MXZC_EXPECTED_LENGTH) {
                     throw callHandlerAndReturnResult(
                             INVALID_DATA_LENGTH,
                             channel, bedrockData, hostname

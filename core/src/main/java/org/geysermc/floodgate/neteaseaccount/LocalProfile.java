@@ -1,4 +1,4 @@
-package org.geysermc.floodgate.neteasebind;
+package org.geysermc.floodgate.neteaseaccount;
 
 import java.util.UUID;
 

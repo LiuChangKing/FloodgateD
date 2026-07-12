@@ -60,7 +60,7 @@ public final class PlayerLinkHolder {
 
         PlayerLinkConfig linkConfig = config.getPlayerLink();
         if (linkConfig.isEnabled() || linkConfig.isEnableOwnLinking() || linkConfig.isEnableGlobalLinking()) {
-            logger.info("Floodgate player linking is disabled in the Netease build; use netease-bind instead");
+            logger.info("Floodgate player linking is disabled in the Netease build; use Netease account auto-unify instead");
         }
         return new DisabledPlayerLink();
     }

@@ -7,11 +7,16 @@ main: org.geysermc.floodgate.SpigotPlugin
 api-version: 1.13
 folia-supported: true
 commands:
-  neteasebind:
+  neteaseaccount:
     description: 梦想之城账号互通命令
     aliases:
+      - neteasebind
+      - naccount
       - nbind
 permissions:
-  floodgate.neteasebind.admin:
+  floodgate.neteaseaccount.admin:
     description: 允许查看账号互通在线诊断
+    default: op
+  floodgate.neteasebind.admin:
+    description: 兼容旧版账号互通在线诊断权限
     default: op

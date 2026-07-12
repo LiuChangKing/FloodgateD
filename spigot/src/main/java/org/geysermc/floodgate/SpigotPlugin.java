@@ -38,7 +38,7 @@ import org.geysermc.floodgate.module.SpigotAddonModule;
 import org.geysermc.floodgate.module.SpigotCommandModule;
 import org.geysermc.floodgate.module.SpigotListenerModule;
 import org.geysermc.floodgate.module.SpigotPlatformModule;
-import org.geysermc.floodgate.neteasebind.NeteaseBindSpigotBridge;
+import org.geysermc.floodgate.neteaseaccount.NeteaseAccountSpigotBridge;
 import org.geysermc.floodgate.util.ReflectionUtils;
 import org.geysermc.floodgate.util.SpigotHandshakeHandler;
 import org.geysermc.floodgate.util.SpigotProtocolSupportHandler;
@@ -47,7 +47,7 @@ import org.geysermc.floodgate.util.SpigotProtocolSupportListener;
 public final class SpigotPlugin extends JavaPlugin {
     private FloodgatePlatform platform;
     private Injector injector;
-    private NeteaseBindSpigotBridge neteaseBindBridge;
+    private NeteaseAccountSpigotBridge neteaseAccountBridge;
 
     @Override
     public void onLoad() {
@@ -85,19 +85,19 @@ public final class SpigotPlugin extends JavaPlugin {
             SpigotProtocolSupportListener.registerHack(this);
         }
 
-        neteaseBindBridge = new NeteaseBindSpigotBridge(this);
-        neteaseBindBridge.enable();
+        neteaseAccountBridge = new NeteaseAccountSpigotBridge(this);
+        neteaseAccountBridge.enable();
     }
 
     @Override
     public void onDisable() {
-        if (neteaseBindBridge != null) {
-            neteaseBindBridge.disable();
+        if (neteaseAccountBridge != null) {
+            neteaseAccountBridge.disable();
         }
         platform.disable();
     }
 
-    public NeteaseBindSpigotBridge getNeteaseBindBridge() {
-        return neteaseBindBridge;
+    public NeteaseAccountSpigotBridge getNeteaseAccountBridge() {
+        return neteaseAccountBridge;
     }
 }

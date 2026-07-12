@@ -34,6 +34,7 @@ import lombok.RequiredArgsConstructor;
 import org.geysermc.floodgate.api.FloodgateApi;
 import org.geysermc.floodgate.api.ProxyFloodgateApi;
 import org.geysermc.floodgate.api.handshake.HandshakeData;
+import org.geysermc.floodgate.api.netease.NeteaseAccountProfileProperties;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
 import org.geysermc.floodgate.api.player.PropertyKey;
 import org.geysermc.floodgate.api.player.PropertyKey.Result;
@@ -81,11 +82,15 @@ public final class FloodgatePlayerImpl implements FloodgatePlayer {
 
         LinkedPlayer linkedPlayer = handshakeData.getLinkedPlayer();
 
-        return new FloodgatePlayerImpl(
+        FloodgatePlayerImpl player = new FloodgatePlayerImpl(
                 data.getVersion(), data.getUsername(), handshakeData.getJavaUsername(),
                 javaUniqueId, data.getXuid(), deviceOs, data.getLanguageCode(), uiProfile,
                 inputMode, data.getIp(), data.isFromProxy(), api instanceof ProxyFloodgateApi,
                 linkedPlayer, data.getSubscribeId(), data.getVerifyCode());
+        if (data.getNeteaseUid() > 0) {
+            player.addProperty(NeteaseAccountProfileProperties.GEYSER_BEDROCK_UID, data.getNeteaseUid());
+        }
+        return player;
     }
 
     @Override

@@ -1,4 +1,4 @@
-package org.geysermc.floodgate.neteasebind;
+package org.geysermc.floodgate.neteaseaccount;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -11,6 +11,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import com.liuchangking.dreamengine.utils.MessageUtil;
@@ -31,63 +32,66 @@ import org.bukkit.scheduler.BukkitTask;
 import org.geysermc.floodgate.SpigotPlugin;
 import org.geysermc.floodgate.api.FloodgateApi;
 import org.geysermc.floodgate.api.netease.EntryType;
-import org.geysermc.floodgate.api.netease.NeteaseBindProfileProperties;
+import org.geysermc.floodgate.api.netease.NeteaseAccountProfileProperties;
 import org.geysermc.floodgate.api.netease.NeteaseAccountApi;
 import org.geysermc.floodgate.api.netease.NeteaseAccountBridge;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
 
-public final class NeteaseBindSpigotBridge implements Listener, PluginMessageListener, CommandExecutor, TabCompleter, NeteaseAccountApi {
+public final class NeteaseAccountSpigotBridge implements Listener, PluginMessageListener, CommandExecutor, TabCompleter, NeteaseAccountApi {
     private static final String SUCCESS_PREFIX = "&8[&a&l!&8] &a";
     private static final String WARNING_PREFIX = "&8[&e&l!&8] &e";
     private static final String ERROR_PREFIX = "&8[&c&l!&8] &c";
     private static final String LEGACY_FLOODGATE_UUID_MARKER = "00000000-0000-4000-8000";
-    private static final String ADMIN_PERMISSION = "floodgate.neteasebind.admin";
+    private static final String ADMIN_PERMISSION = "floodgate.neteaseaccount.admin";
+    private static final String LEGACY_ADMIN_PERMISSION = "floodgate.neteasebind.admin";
 
     private final SpigotPlugin plugin;
-    private final NeteaseBindConfig config;
+    private final NeteaseAccountConfig config;
     private final Map<UUID, EntryType> entryTypes = new ConcurrentHashMap<>();
     private final Map<UUID, UUID> javaUuids = new ConcurrentHashMap<>();
-    private final Map<UUID, Long> unboundPromptPendingUntil = new ConcurrentHashMap<>();
-    private final Map<UUID, Long> lastUnboundPromptAt = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> javaUids = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> bedrockUids = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> unresolvedPromptPendingUntil = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> lastUnresolvedPromptAt = new ConcurrentHashMap<>();
     private BukkitTask promptTask;
     private volatile boolean dreamEnginePromptWarningLogged;
     private volatile boolean dreamEngineNotifyWarningLogged;
 
-    public NeteaseBindSpigotBridge(SpigotPlugin plugin) {
+    public NeteaseAccountSpigotBridge(SpigotPlugin plugin) {
         this.plugin = plugin;
         try {
-            this.config = NeteaseBindConfig.load(plugin.getDataFolder().toPath());
+            this.config = NeteaseAccountConfig.load(plugin.getDataFolder().toPath());
         } catch (IOException exception) {
-            throw new IllegalStateException("Failed to load netease-bind.yml", exception);
+            throw new IllegalStateException("Failed to load netease-account.yml", exception);
         }
     }
 
     public void enable() {
         if (!config.enabled()) {
-            plugin.getLogger().info("Netease bind companion is disabled by netease-bind.yml");
+            plugin.getLogger().info("Netease account companion is disabled by netease-account.yml");
             return;
         }
 
-        plugin.getServer().getMessenger().registerOutgoingPluginChannel(plugin, BridgeChannel.ID);
-        plugin.getServer().getMessenger().registerIncomingPluginChannel(plugin, BridgeChannel.ID, this);
+        plugin.getServer().getMessenger().registerOutgoingPluginChannel(plugin, AccountBridgeChannel.ID);
+        plugin.getServer().getMessenger().registerIncomingPluginChannel(plugin, AccountBridgeChannel.ID, this);
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
         plugin.getServer().getServicesManager().register(NeteaseAccountApi.class, this, plugin, ServicePriority.Normal);
         NeteaseAccountBridge.setInstance(this);
-        startUnboundPromptTask();
+        startUnresolvedPromptTask();
 
         PluginCommand command = plugin.getCommand(config.commandName());
-        if (command == null && !"neteasebind".equalsIgnoreCase(config.commandName())) {
+        if (command == null && !"neteaseaccount".equalsIgnoreCase(config.commandName())) {
             plugin.getLogger().warning("Command '" + config.commandName()
-                    + "' is not declared in plugin.yml; falling back to /neteasebind");
-            command = plugin.getCommand("neteasebind");
+                    + "' is not declared in plugin.yml; falling back to /neteaseaccount");
+            command = plugin.getCommand("neteaseaccount");
         }
         if (command != null) {
             command.setExecutor(this);
             command.setTabCompleter(this);
         } else {
-            plugin.getLogger().warning("Netease bind command is unavailable because plugin.yml has no command entry");
+            plugin.getLogger().warning("Netease account command is unavailable because plugin.yml has no command entry");
         }
-        plugin.getLogger().info("Netease bind companion enabled");
+        plugin.getLogger().info("Netease account companion enabled");
     }
 
     public void disable() {
@@ -96,13 +100,15 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
             promptTask = null;
         }
         plugin.getServer().getServicesManager().unregister(NeteaseAccountApi.class, this);
-        plugin.getServer().getMessenger().unregisterOutgoingPluginChannel(plugin, BridgeChannel.ID);
-        plugin.getServer().getMessenger().unregisterIncomingPluginChannel(plugin, BridgeChannel.ID);
+        plugin.getServer().getMessenger().unregisterOutgoingPluginChannel(plugin, AccountBridgeChannel.ID);
+        plugin.getServer().getMessenger().unregisterIncomingPluginChannel(plugin, AccountBridgeChannel.ID);
         NeteaseAccountBridge.clearInstance(this);
         entryTypes.clear();
         javaUuids.clear();
-        unboundPromptPendingUntil.clear();
-        lastUnboundPromptAt.clear();
+        javaUids.clear();
+        bedrockUids.clear();
+        unresolvedPromptPendingUntil.clear();
+        lastUnresolvedPromptAt.clear();
     }
 
     @Override
@@ -113,18 +119,18 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
         }
 
         Player player = (Player) sender;
-        if (isOnlineCommand(args) && !player.hasPermission(ADMIN_PERMISSION)) {
+        if (isOnlineCommand(args) && !hasAdminPermission(player)) {
             player.sendMessage(error("你没有权限查看账号互通在线诊断"));
             return true;
         }
 
         if (args.length == 0 || (args.length == 1
                 && (args[0].equalsIgnoreCase("ui") || args[0].equalsIgnoreCase("menu")))) {
-            openBindUiOrFallback(player);
+            openAccountUiOrFallback(player);
             return true;
         }
 
-        forwardBindCommand(player, args);
+        forwardAccountCommand(player, args);
         return true;
     }
 
@@ -133,26 +139,15 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
         if (args.length == 1) {
             List<String> candidates = new ArrayList<>();
             candidates.add("status");
-            candidates.add("unbind");
             candidates.add("ui");
-            if (sender.hasPermission(ADMIN_PERMISSION)) {
+            if (hasAdminPermission(sender)) {
                 candidates.add("online");
                 candidates.add("list");
                 candidates.add("players");
             }
-            if (sender instanceof Player) {
-                for (Player player : plugin.getServer().getOnlinePlayers()) {
-                    if (!player.getName().equalsIgnoreCase(sender.getName())) {
-                        candidates.add(player.getName());
-                    }
-                }
-            }
             return filterPrefix(candidates, args[0]);
         }
-        if (args.length == 2 && args[0].equalsIgnoreCase("unbind")) {
-            return filterPrefix(Collections.singletonList("confirm"), args[1]);
-        }
-        if (args.length == 2 && isOnlineCommand(args) && sender.hasPermission(ADMIN_PERMISSION)) {
+        if (args.length == 2 && isOnlineCommand(args) && hasAdminPermission(sender)) {
             List<String> candidates = new ArrayList<>();
             candidates.add("all");
             for (Player player : plugin.getServer().getOnlinePlayers()) {
@@ -161,6 +156,10 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
             return filterPrefix(candidates, args[1]);
         }
         return Collections.emptyList();
+    }
+
+    private static boolean hasAdminPermission(CommandSender sender) {
+        return sender.hasPermission(ADMIN_PERMISSION) || sender.hasPermission(LEGACY_ADMIN_PERMISSION);
     }
 
     private static boolean isOnlineCommand(String[] args) {
@@ -186,31 +185,30 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
         return result;
     }
 
-    private void openBindUiOrFallback(Player player) {
+    private void openAccountUiOrFallback(Player player) {
         if (plugin.getServer().getPluginManager().isPluginEnabled("DreamEngine")) {
             try {
-                new NeteaseBindDreamEngineUi(this).open(player);
+                new NeteaseAccountDreamEngineUi(this).open(player);
             } catch (LinkageError error) {
                 plugin.getLogger().warning("DreamEngine UI classes are unavailable: " + error.getMessage());
                 sendFallbackUsage(player);
             }
             return;
         }
-        player.sendMessage(warning("当前子服未安装 DreamEngine，无法打开绑定界面"));
+        player.sendMessage(warning("当前子服未安装 DreamEngine，无法打开账号互通界面"));
         sendFallbackUsage(player);
     }
 
     private void sendFallbackUsage(Player player) {
-        player.sendMessage(warning("Java 玩家请输入 /" + config.commandName() + " 获取验证码"));
-        player.sendMessage(warning("基岩玩家请输入 /" + config.commandName() + " <Java玩家名> <验证码> 完成绑定"));
-        player.sendMessage(warning("已绑定玩家请输入 /" + config.commandName() + " unbind confirm 解除绑定"));
+        player.sendMessage(warning("账号互通已改为网易 UID 自动识别，无需验证码或手动关联"));
+        player.sendMessage(warning("请输入 /" + config.commandName() + " status 查看当前账号识别状态"));
     }
 
-    void forwardBindCommand(Player player, String[] args) {
-        forwardBindCommand(player, args, null);
+    void forwardAccountCommand(Player player, String[] args) {
+        forwardAccountCommand(player, args, null);
     }
 
-    void forwardBindCommand(Player player, String[] args, String feedbackMessage) {
+    void forwardAccountCommand(Player player, String[] args, String feedbackMessage) {
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             try (DataOutputStream output = new DataOutputStream(bytes)) {
@@ -220,13 +218,13 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
                     output.writeUTF(arg);
                 }
             }
-            player.sendPluginMessage(plugin, BridgeChannel.ID, bytes.toByteArray());
+            player.sendPluginMessage(plugin, AccountBridgeChannel.ID, bytes.toByteArray());
             if (feedbackMessage != null && !feedbackMessage.isEmpty()) {
                 notifySuccess(player, "请求已提交", feedbackMessage);
             }
         } catch (IOException exception) {
-            notifyError(player, "提交失败", "绑定命令转发失败，请联系管理员");
-            plugin.getLogger().warning("Failed to forward Netease bind command: " + exception.getMessage());
+            notifyError(player, "提交失败", "账号命令转发失败，请联系管理员");
+            plugin.getLogger().warning("Failed to forward Netease account command: " + exception.getMessage());
         }
     }
 
@@ -288,7 +286,7 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
 
     @Override
     public void onPluginMessageReceived(String channel, Player player, byte[] message) {
-        if (!BridgeChannel.ID.equals(channel)) {
+        if (!AccountBridgeChannel.ID.equals(channel)) {
             return;
         }
         try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(message))) {
@@ -298,18 +296,20 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
                 EntryType entryType = EntryType.valueOf(input.readUTF());
                 String javaUuidValue = input.readUTF();
                 UUID javaUuid = javaUuidValue.isEmpty() ? null : UUID.fromString(javaUuidValue);
-                update(playerUuid, entryType, javaUuid);
+                Long javaUid = input.available() >= Long.BYTES ? normalizeUid(input.readLong()) : null;
+                Long bedrockUid = input.available() >= Long.BYTES ? normalizeUid(input.readLong()) : null;
+                update(playerUuid, entryType, javaUuid, javaUid, bedrockUid);
                 return;
             }
-            if (!"bind_prompt_state".equals(action)) {
+            if (!"account_prompt_state".equals(action)) {
                 return;
             }
             UUID playerUuid = UUID.fromString(input.readUTF());
-            boolean unbound = input.readBoolean();
+            boolean unresolved = input.readBoolean();
             long pendingExpiresAtMillis = input.readLong();
-            updateUnboundPromptState(playerUuid, unbound, pendingExpiresAtMillis);
+            updateUnresolvedPromptState(playerUuid, unresolved, pendingExpiresAtMillis);
         } catch (IllegalArgumentException | IOException exception) {
-            plugin.getLogger().warning("Failed to read Netease bind bridge message: " + exception.getMessage());
+            plugin.getLogger().warning("Failed to read Netease account bridge message: " + exception.getMessage());
         }
     }
 
@@ -321,7 +321,7 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
             if (onlinePlayer == null || !onlinePlayer.isOnline()) {
                 return;
             }
-            requestNeteaseBindState(onlinePlayer);
+            requestNeteaseAccountState(onlinePlayer);
             logPlayerPlatform(onlinePlayer);
         }, 20L);
     }
@@ -335,6 +335,8 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
         UUID playerUuid = player.getUniqueId();
         EntryType entryType = getEntryType(playerUuid);
         Optional<UUID> originalJavaUuid = getOriginalJavaUuid(playerUuid);
+        OptionalLong originalJavaUid = getOriginalJavaUid(playerUuid);
+        OptionalLong bedrockUid = getBedrockUid(playerUuid);
         FloodgateApi api = FloodgateApi.getInstance();
         boolean apiAvailable = api != null;
         boolean floodgateId = apiAvailable && api.isFloodgateId(playerUuid);
@@ -346,6 +348,8 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
                 .append(" UUID=").append(playerUuid)
                 .append(" EntryType=").append(entryType)
                 .append(" OriginalJavaUUID=").append(originalJavaUuid.map(UUID::toString).orElse("-"))
+                .append(" JavaUID=").append(formatOptionalLong(originalJavaUid))
+                .append(" BedrockUID=").append(formatOptionalLong(bedrockUid))
                 .append(" FloodgateApi=").append(apiAvailable)
                 .append(" isFloodgatePlayer=").append(floodgatePlayerFlag)
                 .append(" isFloodgateId=").append(floodgateId)
@@ -391,10 +395,41 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
             return Optional.empty();
         }
         refreshFromForwardedProfile(playerUuid);
-        return Optional.ofNullable(javaUuids.get(playerUuid));
+        UUID javaUuid = javaUuids.get(playerUuid);
+        if (javaUuid != null) {
+            return Optional.of(javaUuid);
+        }
+        return entryTypes.get(playerUuid) == EntryType.UNRESOLVED_JAVA
+                ? Optional.of(playerUuid)
+                : Optional.empty();
     }
 
-    public void updateFromForwardedProfile(UUID playerUuid, String entryTypeValue, String javaUuidValue) {
+    @Override
+    public OptionalLong getOriginalJavaUid(UUID playerUuid) {
+        if (playerUuid == null) {
+            return OptionalLong.empty();
+        }
+        refreshFromForwardedProfile(playerUuid);
+        Long javaUid = javaUids.get(playerUuid);
+        return javaUid == null ? OptionalLong.empty() : OptionalLong.of(javaUid);
+    }
+
+    @Override
+    public OptionalLong getBedrockUid(UUID playerUuid) {
+        if (playerUuid == null) {
+            return OptionalLong.empty();
+        }
+        refreshFromForwardedProfile(playerUuid);
+        Long bedrockUid = bedrockUids.get(playerUuid);
+        return bedrockUid == null ? OptionalLong.empty() : OptionalLong.of(bedrockUid);
+    }
+
+    public void updateFromForwardedProfile(
+            UUID playerUuid,
+            String entryTypeValue,
+            String javaUuidValue,
+            String javaUidValue,
+            String bedrockUidValue) {
         if (playerUuid == null || entryTypeValue == null || entryTypeValue.isEmpty()) {
             return;
         }
@@ -403,19 +438,33 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
             UUID javaUuid = javaUuidValue == null || javaUuidValue.isEmpty()
                     ? null
                     : UUID.fromString(javaUuidValue);
-            update(playerUuid, entryType, javaUuid);
+            update(playerUuid, entryType, javaUuid, parseUid(javaUidValue), parseUid(bedrockUidValue));
         } catch (IllegalArgumentException exception) {
-            plugin.getLogger().warning("Ignoring invalid Netease bind profile marker for "
+            plugin.getLogger().warning("Ignoring invalid Netease account profile marker for "
                     + playerUuid + ": " + exception.getMessage());
         }
     }
 
-    private void update(UUID playerUuid, EntryType entryType, UUID javaUuid) {
+    public void updateFromForwardedProfile(UUID playerUuid, String entryTypeValue, String javaUuidValue) {
+        updateFromForwardedProfile(playerUuid, entryTypeValue, javaUuidValue, null, null);
+    }
+
+    private void update(UUID playerUuid, EntryType entryType, UUID javaUuid, Long javaUid, Long bedrockUid) {
         entryTypes.put(playerUuid, entryType);
         if (javaUuid == null) {
             javaUuids.remove(playerUuid);
         } else {
             javaUuids.put(playerUuid, javaUuid);
+        }
+        if (javaUid == null) {
+            javaUids.remove(playerUuid);
+        } else {
+            javaUids.put(playerUuid, javaUid);
+        }
+        if (bedrockUid == null) {
+            bedrockUids.remove(playerUuid);
+        } else {
+            bedrockUids.put(playerUuid, bedrockUid);
         }
     }
 
@@ -429,7 +478,7 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
         }
         ForwardedProfileMarker marker = readForwardedProfileMarker(player);
         if (marker != null) {
-            updateFromForwardedProfile(playerUuid, marker.entryType, marker.javaUuid);
+            updateFromForwardedProfile(playerUuid, marker.entryType, marker.javaUuid, marker.javaUid, marker.bedrockUid);
         }
     }
 
@@ -450,18 +499,24 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
 
         String entryType = null;
         String javaUuid = null;
+        String javaUid = null;
+        String bedrockUid = null;
         for (Object property : iterable) {
             String name = invokeStringProperty(property, "getName", "name");
-            if (NeteaseBindProfileProperties.ENTRY_TYPE.equals(name)) {
+            if (NeteaseAccountProfileProperties.ENTRY_TYPE.equals(name)) {
                 entryType = invokeStringProperty(property, "getValue", "value");
-            } else if (NeteaseBindProfileProperties.JAVA_UUID.equals(name)) {
+            } else if (NeteaseAccountProfileProperties.JAVA_UUID.equals(name)) {
                 javaUuid = invokeStringProperty(property, "getValue", "value");
+            } else if (NeteaseAccountProfileProperties.JAVA_UID.equals(name)) {
+                javaUid = invokeStringProperty(property, "getValue", "value");
+            } else if (NeteaseAccountProfileProperties.BEDROCK_UID.equals(name)) {
+                bedrockUid = invokeStringProperty(property, "getValue", "value");
             }
         }
         if (entryType == null) {
             return null;
         }
-        return new ForwardedProfileMarker(entryType, javaUuid);
+        return new ForwardedProfileMarker(entryType, javaUuid, javaUid, bedrockUid);
     }
 
     private Iterable<?> asIterable(Object properties) {
@@ -521,69 +576,71 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
     private void remove(UUID playerUuid) {
         entryTypes.remove(playerUuid);
         javaUuids.remove(playerUuid);
-        unboundPromptPendingUntil.remove(playerUuid);
-        lastUnboundPromptAt.remove(playerUuid);
+        javaUids.remove(playerUuid);
+        bedrockUids.remove(playerUuid);
+        unresolvedPromptPendingUntil.remove(playerUuid);
+        lastUnresolvedPromptAt.remove(playerUuid);
     }
 
     SpigotPlugin plugin() {
         return plugin;
     }
 
-    private void startUnboundPromptTask() {
-        long intervalTicks = unboundPromptIntervalMillis() / 50L;
+    private void startUnresolvedPromptTask() {
+        long intervalTicks = unresolvedPromptIntervalMillis() / 50L;
         promptTask = plugin.getServer().getScheduler().runTaskTimer(
                 plugin,
-                this::sendUnboundBindPrompts,
+                this::sendUnresolvedPrompts,
                 40L,
                 intervalTicks
         );
     }
 
-    private void updateUnboundPromptState(UUID playerUuid, boolean unbound, long pendingExpiresAtMillis) {
+    private void updateUnresolvedPromptState(UUID playerUuid, boolean unresolved, long pendingExpiresAtMillis) {
         if (playerUuid == null) {
             return;
         }
-        if (!unbound) {
-            unboundPromptPendingUntil.remove(playerUuid);
-            lastUnboundPromptAt.remove(playerUuid);
+        if (!unresolved) {
+            unresolvedPromptPendingUntil.remove(playerUuid);
+            lastUnresolvedPromptAt.remove(playerUuid);
             return;
         }
-        unboundPromptPendingUntil.put(playerUuid, Math.max(0L, pendingExpiresAtMillis));
+        unresolvedPromptPendingUntil.put(playerUuid, Math.max(0L, pendingExpiresAtMillis));
         Player player = plugin.getServer().getPlayer(playerUuid);
         if (player != null) {
-            sendUnboundBindPromptIfNeeded(player);
+            sendUnresolvedPromptIfNeeded(player);
         }
     }
 
-    private void sendUnboundBindPrompts() {
-        for (UUID playerUuid : unboundPromptPendingUntil.keySet()) {
+    private void sendUnresolvedPrompts() {
+        for (UUID playerUuid : unresolvedPromptPendingUntil.keySet()) {
             Player player = plugin.getServer().getPlayer(playerUuid);
             if (player == null) {
-                unboundPromptPendingUntil.remove(playerUuid);
+                unresolvedPromptPendingUntil.remove(playerUuid);
                 continue;
             }
-            sendUnboundBindPromptIfNeeded(player);
+            sendUnresolvedPromptIfNeeded(player);
         }
     }
 
-    private void sendUnboundBindPromptIfNeeded(Player player) {
+    private void sendUnresolvedPromptIfNeeded(Player player) {
         UUID playerUuid = player.getUniqueId();
         long now = System.currentTimeMillis();
-        Long pendingUntil = unboundPromptPendingUntil.get(playerUuid);
+        Long pendingUntil = unresolvedPromptPendingUntil.get(playerUuid);
         if (pendingUntil == null || pendingUntil > now) {
             return;
         }
 
-        Long lastPromptAt = lastUnboundPromptAt.get(playerUuid);
-        if (lastPromptAt != null && now - lastPromptAt < unboundPromptIntervalMillis()) {
+        Long lastPromptAt = lastUnresolvedPromptAt.get(playerUuid);
+        if (lastPromptAt != null && now - lastPromptAt < unresolvedPromptIntervalMillis()) {
             return;
         }
 
-        String prompt = config.unboundBindPromptMessage();
-        String title = config.unboundBindTitle();
-        String subtitle = config.unboundBindSubtitle();
+        String prompt = config.unresolvedJavaNotify();
+        String title = config.unresolvedJavaTitle();
+        String subtitle = config.unresolvedJavaSubtitle();
         if (sendDreamEnginePrompt(player, prompt, title, subtitle)) {
-            lastUnboundPromptAt.put(playerUuid, now);
+            lastUnresolvedPromptAt.put(playerUuid, now);
             return;
         }
 
@@ -597,7 +654,7 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
         if (!coloredTitle.isEmpty() || !coloredSubtitle.isEmpty()) {
             player.sendTitle(coloredTitle, coloredSubtitle, 10, 60, 20);
         }
-        lastUnboundPromptAt.put(playerUuid, now);
+        lastUnresolvedPromptAt.put(playerUuid, now);
     }
 
     private boolean sendDreamEnginePrompt(Player player, String prompt, String title, String subtitle) {
@@ -621,30 +678,54 @@ public final class NeteaseBindSpigotBridge implements Listener, PluginMessageLis
         }
     }
 
-    private void requestNeteaseBindState(Player player) {
+    private void requestNeteaseAccountState(Player player) {
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             try (DataOutputStream output = new DataOutputStream(bytes)) {
                 output.writeUTF("request_state");
                 output.writeUTF(player.getUniqueId().toString());
             }
-            player.sendPluginMessage(plugin, BridgeChannel.ID, bytes.toByteArray());
+            player.sendPluginMessage(plugin, AccountBridgeChannel.ID, bytes.toByteArray());
         } catch (IOException exception) {
-            plugin.getLogger().warning("Failed to request Netease bind state: " + exception.getMessage());
+            plugin.getLogger().warning("Failed to request Netease account state: " + exception.getMessage());
         }
     }
 
-    private long unboundPromptIntervalMillis() {
-        return Math.max(1L, config.unboundPromptIntervalSeconds()) * 1000L;
+    private long unresolvedPromptIntervalMillis() {
+        return Math.max(1L, config.unresolvedPromptIntervalSeconds()) * 1000L;
+    }
+
+    private static Long normalizeUid(long value) {
+        return value < 0L ? null : value;
+    }
+
+    private static Long parseUid(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return null;
+        }
+        try {
+            long parsed = Long.parseLong(value.trim());
+            return parsed < 0L ? null : parsed;
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private static String formatOptionalLong(OptionalLong optional) {
+        return optional.isPresent() ? String.valueOf(optional.getAsLong()) : "-";
     }
 
     private static final class ForwardedProfileMarker {
         private final String entryType;
         private final String javaUuid;
+        private final String javaUid;
+        private final String bedrockUid;
 
-        private ForwardedProfileMarker(String entryType, String javaUuid) {
+        private ForwardedProfileMarker(String entryType, String javaUuid, String javaUid, String bedrockUid) {
             this.entryType = entryType;
             this.javaUuid = javaUuid;
+            this.javaUid = javaUid;
+            this.bedrockUid = bedrockUid;
         }
     }
 }

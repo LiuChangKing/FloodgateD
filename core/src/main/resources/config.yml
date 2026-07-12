@@ -41,7 +41,7 @@ player-link:
   # The following three options only apply when 'enable-own-linking' is set to 'true'
 
   # Official Floodgate linking commands are disabled in the Netease build.
-  # Use /neteasebind and the netease-bind database instead.
+  # Use netease-account.yml and the netease_account_profile table instead.
   allowed: false
   # The amount of time until a link code expires in seconds.
   link-code-timeout: 300

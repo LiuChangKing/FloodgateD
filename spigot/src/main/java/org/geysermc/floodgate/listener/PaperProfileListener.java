@@ -35,9 +35,9 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.geysermc.floodgate.SpigotPlugin;
 import org.geysermc.floodgate.api.SimpleFloodgateApi;
-import org.geysermc.floodgate.api.netease.NeteaseBindProfileProperties;
+import org.geysermc.floodgate.api.netease.NeteaseAccountProfileProperties;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
-import org.geysermc.floodgate.neteasebind.NeteaseBindSpigotBridge;
+import org.geysermc.floodgate.neteaseaccount.NeteaseAccountSpigotBridge;
 import org.geysermc.floodgate.util.Constants;
 
 public final class PaperProfileListener implements Listener {
@@ -78,20 +78,26 @@ public final class PaperProfileListener implements Listener {
     }
 
     private void rememberNeteaseEntryType(PreFillProfileEvent event, UUID id) {
-        NeteaseBindSpigotBridge bridge = plugin.getNeteaseBindBridge();
+        NeteaseAccountSpigotBridge bridge = plugin.getNeteaseAccountBridge();
         if (bridge == null) {
             return;
         }
 
         String entryType = null;
         String javaUuid = null;
+        String javaUid = null;
+        String bedrockUid = null;
         for (ProfileProperty property : event.getPlayerProfile().getProperties()) {
-            if (NeteaseBindProfileProperties.ENTRY_TYPE.equals(property.getName())) {
+            if (NeteaseAccountProfileProperties.ENTRY_TYPE.equals(property.getName())) {
                 entryType = property.getValue();
-            } else if (NeteaseBindProfileProperties.JAVA_UUID.equals(property.getName())) {
+            } else if (NeteaseAccountProfileProperties.JAVA_UUID.equals(property.getName())) {
                 javaUuid = property.getValue();
+            } else if (NeteaseAccountProfileProperties.JAVA_UID.equals(property.getName())) {
+                javaUid = property.getValue();
+            } else if (NeteaseAccountProfileProperties.BEDROCK_UID.equals(property.getName())) {
+                bedrockUid = property.getValue();
             }
         }
-        bridge.updateFromForwardedProfile(id, entryType, javaUuid);
+        bridge.updateFromForwardedProfile(id, entryType, javaUuid, javaUid, bedrockUid);
     }
 }

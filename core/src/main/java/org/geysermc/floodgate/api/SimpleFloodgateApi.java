@@ -84,10 +84,10 @@ public class SimpleFloodgateApi implements FloodgateApi {
 
     @Override
     public FloodgatePlayer getPlayer(UUID uuid) {
-        return getPlayerWithoutNeteaseBindFilter(uuid);
+        return getPlayerWithoutNeteaseAccountFilter(uuid);
     }
 
-    public FloodgatePlayer getPlayerWithoutNeteaseBindFilter(UUID uuid) {
+    public FloodgatePlayer getPlayerWithoutNeteaseAccountFilter(UUID uuid) {
         FloodgatePlayer selfPlayer = players.get(uuid);
         if (selfPlayer != null) {
             return selfPlayer;
