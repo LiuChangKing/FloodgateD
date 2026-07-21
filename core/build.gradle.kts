@@ -20,6 +20,8 @@ dependencies {
     api("org.bstats", "bstats-base", Versions.bstatsVersion)
     api("org.msgpack", "msgpack", Versions.msgpackVersion)
     api("com.zaxxer", "HikariCP", "4.0.3")
+    compileOnly("com.google.code.gson", "gson", "2.8.8")
+    testImplementation("com.google.code.gson", "gson", "2.8.8")
 }
 
 // present on all platforms

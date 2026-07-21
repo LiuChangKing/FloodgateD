@@ -58,6 +58,7 @@ import org.geysermc.floodgate.api.ProxyFloodgateApi;
 import org.geysermc.floodgate.api.logger.FloodgateLogger;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
 import org.geysermc.floodgate.config.ProxyFloodgateConfig;
+import org.geysermc.floodgate.neteaseaccount.NeteaseAccountVelocityService;
 import org.geysermc.floodgate.util.Constants;
 import org.geysermc.floodgate.util.LanguageManager;
 import org.geysermc.floodgate.util.MojangUtils;
@@ -101,6 +102,11 @@ public final class VelocityListener {
                     .maximumSize(500)
                     .expireAfterAccess(20, TimeUnit.SECONDS)
                     .build();
+    private final NeteaseAccountVelocityService neteaseAccountService;
+
+    public VelocityListener(NeteaseAccountVelocityService neteaseAccountService) {
+        this.neteaseAccountService = neteaseAccountService;
+    }
 
     @Inject private ProxyFloodgateConfig config;
     @Inject private ProxyFloodgateApi api;
@@ -165,6 +171,10 @@ public final class VelocityListener {
     public void onGameProfileRequest(GameProfileRequestEvent event, Continuation continuation) {
         FloodgatePlayer player = playerCache.getIfPresent(event.getConnection());
         if (player == null) {
+            if (neteaseAccountService.isEnabled()) {
+                continuation.resume();
+                return;
+            }
             String rename = VelocityRenameUtil.lookupName(event.getGameProfile().getId(), event.getUsername(),"pc");
             if (rename != null && !rename.equals(event.getUsername())) {
                 event.setGameProfile(new GameProfile(

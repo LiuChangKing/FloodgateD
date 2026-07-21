@@ -52,6 +52,9 @@ public final class VelocityPlugin {
     private static volatile HikariDataSource dataSource;
     private static volatile String startupBlockReason = DATABASE_BLOCK_MESSAGE;
     private static volatile String startupBlockDetails = "Floodgate datasource is not initialized";
+    private static final Object DATA_SOURCE_VALIDATION_LOCK = new Object();
+    private static volatile long lastDataSourceValidationMillis;
+    private static volatile long lastSuccessfulValidationMillis;
     private volatile boolean platformEnabled;
 
     public static HikariDataSource getDataSource() {
@@ -70,28 +73,43 @@ public final class VelocityPlugin {
     }
 
     public static String validateDataSourceReady() {
-        String reason = startupBlockReason;
-        if (reason != null) {
-            return reason;
-        }
-
         HikariDataSource current = dataSource;
         if (current == null || current.isClosed()) {
             markDataSourceUnavailable("Floodgate datasource is not initialized");
             return startupBlockReason;
         }
 
-        try (Connection connection = current.getConnection()) {
-            if (!connection.isValid(2)) {
-                markDataSourceUnavailable("Floodgate datasource validation failed");
-                closeDataSource(current);
+        long now = System.currentTimeMillis();
+        if (startupBlockReason == null && now - lastSuccessfulValidationMillis < 5_000L) {
+            return null;
+        }
+        if (startupBlockReason != null && now - lastDataSourceValidationMillis < 1_000L) {
+            return startupBlockReason;
+        }
+
+        synchronized (DATA_SOURCE_VALIDATION_LOCK) {
+            now = System.currentTimeMillis();
+            if (startupBlockReason == null && now - lastSuccessfulValidationMillis < 5_000L) {
+                return null;
+            }
+            if (startupBlockReason != null && now - lastDataSourceValidationMillis < 1_000L) {
                 return startupBlockReason;
             }
-            return null;
-        } catch (SQLException exception) {
-            markDataSourceUnavailable("Floodgate datasource is unavailable: " + exception.getMessage());
-            closeDataSource(current);
-            return startupBlockReason;
+            lastDataSourceValidationMillis = now;
+            try (Connection connection = current.getConnection()) {
+                if (!connection.isValid(2)) {
+                    markDataSourceUnavailable("Floodgate datasource validation failed");
+                    return startupBlockReason;
+                }
+                startupBlockDetails = null;
+                startupBlockReason = null;
+                lastSuccessfulValidationMillis = System.currentTimeMillis();
+                return null;
+            } catch (SQLException exception) {
+                // Keep the pool alive so a transient database outage can recover without restarting Velocity.
+                markDataSourceUnavailable("Floodgate datasource is unavailable: " + exception.getMessage());
+                return startupBlockReason;
+            }
         }
     }
 
@@ -136,12 +154,20 @@ public final class VelocityPlugin {
             created.setJdbcUrl(platform.getMysqlurl());
             created.setUsername(platform.getMysqluser());
             created.setPassword(platform.getMysqlpass());
+            created.setPoolName("Floodgate-Netease-Database");
+            created.setConnectionTimeout(3_000L);
+            created.setValidationTimeout(2_000L);
+            created.setMaximumPoolSize(16);
+            created.setMinimumIdle(2);
             initializeLocalProfileTable(created);
             dataSource = created;
             startupBlockDetails = null;
             startupBlockReason = null;
+            lastDataSourceValidationMillis = System.currentTimeMillis();
+            lastSuccessfulValidationMillis = lastDataSourceValidationMillis;
         } catch (SQLException | RuntimeException exception) {
             closeDataSource(created);
+            dataSource = null;
             markDataSourceUnavailable("Failed to initialize required Floodgate datasource: "
                     + exception.getMessage());
             throw new IllegalStateException(startupBlockDetails, exception);
@@ -158,6 +184,8 @@ public final class VelocityPlugin {
         dataSource = null;
         startupBlockReason = DATABASE_BLOCK_MESSAGE;
         startupBlockDetails = "Proxy is shutting down";
+        lastDataSourceValidationMillis = 0L;
+        lastSuccessfulValidationMillis = 0L;
         closeDataSource(current);
     }
 
@@ -175,7 +203,6 @@ public final class VelocityPlugin {
     }
 
     private static void markDataSourceUnavailable(String details) {
-        dataSource = null;
         startupBlockDetails = details;
         startupBlockReason = DATABASE_BLOCK_MESSAGE;
     }

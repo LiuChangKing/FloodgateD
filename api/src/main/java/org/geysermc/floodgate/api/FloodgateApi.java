@@ -32,6 +32,8 @@ import org.geysermc.cumulus.form.Form;
 import org.geysermc.cumulus.form.util.FormBuilder;
 import org.geysermc.floodgate.api.event.FloodgateEventBus;
 import org.geysermc.floodgate.api.link.PlayerLink;
+import org.geysermc.floodgate.api.netease.NeteaseAccountApi;
+import org.geysermc.floodgate.api.netease.NeteaseAccountBridge;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
 import org.geysermc.floodgate.api.unsafe.Unsafe;
 
@@ -158,6 +160,13 @@ public interface FloodgateApi {
      */
     default PlayerLink getPlayerLink() {
         return InstanceHolder.getPlayerLink();
+    }
+
+    /**
+     * Returns the MXZC NetEase account API.
+     */
+    default NeteaseAccountApi getNeteaseAccountApi() {
+        return NeteaseAccountBridge.getInstance();
     }
 
     Unsafe unsafe();

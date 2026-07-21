@@ -12,21 +12,22 @@ import java.util.Map;
 public final class NeteaseAccountConfig {
     private static final String CONFIG_FILE_NAME = "netease-account.yml";
     private static final String COMMAND_NAME = "neteaseaccount";
-    private static final String COMMAND_ALIASES = "neteasebind,naccount,nbind";
+    private static final String COMMAND_ALIASES = "naccount";
     private static final String WARNING_PREFIX = "&8[&e&l!&8] &e";
     private static final String ERROR_PREFIX = "&8[&c&l!&8] &c";
+    private static final String DEFAULT_SUPPORT_QQ_GROUP = "519586736";
+    private static final String SUPPORT_QQ_PROMPT = "&e如遇任何问题，可加入官方 QQ 群咨询解决。";
+    private static final String SUPPORT_QQ_LABEL_PREFIX = "&b&lQQ群：";
+    private static final String KICK_SEPARATOR = "&8&m--------------------------------";
 
     private final boolean enabled;
     private final String accountTable;
     private final long uidQueryTimeoutMillis;
     private final long loginCheckTimeoutMillis;
-    private final long unresolvedPromptIntervalSeconds;
+    private final long takeoverTimeoutMillis;
     private final boolean bootstrapLocalProfileOnStartup;
     private final UidEndpoint bedrockEndpoint;
     private final UidEndpoint javaEndpoint;
-    private final String unresolvedJavaTitle;
-    private final String unresolvedJavaNotify;
-    private final String unresolvedJavaSubtitle;
     private final List<String> unresolvedJavaKickLines;
     private final String linkedJavaLoginBlockedNotifyMessage;
     private final String accountSystemUnavailableMessage;
@@ -38,13 +39,10 @@ public final class NeteaseAccountConfig {
             String accountTable,
             long uidQueryTimeoutMillis,
             long loginCheckTimeoutMillis,
-            long unresolvedPromptIntervalSeconds,
+            long takeoverTimeoutMillis,
             boolean bootstrapLocalProfileOnStartup,
             UidEndpoint bedrockEndpoint,
             UidEndpoint javaEndpoint,
-            String unresolvedJavaTitle,
-            String unresolvedJavaNotify,
-            String unresolvedJavaSubtitle,
             List<String> unresolvedJavaKickLines,
             String linkedJavaLoginBlockedNotifyMessage,
             String accountSystemUnavailableMessage,
@@ -54,13 +52,10 @@ public final class NeteaseAccountConfig {
         this.accountTable = accountTable;
         this.uidQueryTimeoutMillis = uidQueryTimeoutMillis;
         this.loginCheckTimeoutMillis = loginCheckTimeoutMillis;
-        this.unresolvedPromptIntervalSeconds = unresolvedPromptIntervalSeconds;
+        this.takeoverTimeoutMillis = takeoverTimeoutMillis;
         this.bootstrapLocalProfileOnStartup = bootstrapLocalProfileOnStartup;
         this.bedrockEndpoint = bedrockEndpoint;
         this.javaEndpoint = javaEndpoint;
-        this.unresolvedJavaTitle = unresolvedJavaTitle;
-        this.unresolvedJavaNotify = unresolvedJavaNotify;
-        this.unresolvedJavaSubtitle = unresolvedJavaSubtitle;
         this.unresolvedJavaKickLines = new ArrayList<>(unresolvedJavaKickLines);
         this.linkedJavaLoginBlockedNotifyMessage = linkedJavaLoginBlockedNotifyMessage;
         this.accountSystemUnavailableMessage = accountSystemUnavailableMessage;
@@ -76,23 +71,22 @@ public final class NeteaseAccountConfig {
         }
 
         Map<String, List<String>> values = parseSimpleYaml(path);
-        long uidTimeout = Long.parseLong(getScalar(values, "uid-query-timeout-millis", "10000").trim());
-        long loginTimeout = Long.parseLong(getScalar(
+        long uidTimeout = positiveLong(values, "uid-query-timeout-millis", 10000L);
+        long loginTimeout = positiveLong(
                 values,
                 "login-check-timeout-millis",
-                String.valueOf(Math.max(3000L, uidTimeout + 5000L))
-        ).trim());
-        String notify = getScalar(
-                values,
-                "messages.unresolved-java-notify",
-                WARNING_PREFIX + "请使用同一网易账号的基岩版进入本服一次，完成后重新使用 Java 版进入。"
-        );
+                Math.max(5000L, safeAdd(safeMultiply(uidTimeout, 2L), 5000L)));
+        String supportQqGroup = getScalar(
+                values, "messages.support-qq-group", DEFAULT_SUPPORT_QQ_GROUP).trim();
+        List<String> unresolvedJavaKickLines = withSupportQqGroup(
+                getList(values, "messages.unresolved-java-kick", defaultUnresolvedJavaKickLines()),
+                supportQqGroup);
         return new NeteaseAccountConfig(
                 Boolean.parseBoolean(getScalar(values, "enabled", "true").trim()),
                 getScalar(values, "account.table", "netease_account_profile").trim(),
                 uidTimeout,
                 loginTimeout,
-                Long.parseLong(getScalar(values, "messages.unresolved-prompt-interval-seconds", "10").trim()),
+                positiveLong(values, "takeover-timeout-millis", 5000L),
                 Boolean.parseBoolean(getScalar(values, "bootstrap-localprofile-on-startup", "true").trim()),
                 new UidEndpoint(
                         getScalar(values, "bedrock.uid_from_uuid",
@@ -104,10 +98,7 @@ public final class NeteaseAccountConfig {
                                 "http://gasproxy.mc.netease.com:60004/uid-from-uuid").trim(),
                         getScalar(values, "java.key", "").trim()
                 ),
-                getScalar(values, "messages.unresolved-java-title", "请先用基岩版进入一次"),
-                notify,
-                getScalar(values, "messages.unresolved-java-subtitle", "请使用同一网易账号的基岩版进入本服一次"),
-                getList(values, "messages.unresolved-java-kick", defaultUnresolvedJavaKickLines()),
+                unresolvedJavaKickLines,
                 getScalar(
                         values,
                         "messages.linked-java-login-blocked-notify",
@@ -260,6 +251,27 @@ public final class NeteaseAccountConfig {
         return list == null || list.isEmpty() ? fallback : list.get(0);
     }
 
+    private static long positiveLong(Map<String, List<String>> values, String key, long fallback) {
+        String raw = getScalar(values, key, String.valueOf(fallback)).trim();
+        try {
+            long value = Long.parseLong(raw);
+            if (value <= 0L) {
+                throw new IllegalArgumentException(key + " must be greater than zero");
+            }
+            return value;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(key + " must be a valid integer: " + raw, exception);
+        }
+    }
+
+    private static long safeMultiply(long value, long multiplier) {
+        return value > Long.MAX_VALUE / multiplier ? Long.MAX_VALUE : value * multiplier;
+    }
+
+    private static long safeAdd(long left, long right) {
+        return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
+    }
+
     private static List<String> getList(
             Map<String, List<String>> values,
             String key,
@@ -270,7 +282,7 @@ public final class NeteaseAccountConfig {
 
     private static List<String> defaultUnresolvedJavaKickLines() {
         List<String> lines = new ArrayList<>();
-        lines.add("&8&m--------------------------------");
+        lines.add(KICK_SEPARATOR);
         lines.add("&e&l账号互通需要初始化");
         lines.add("");
         lines.add("&f检测到您尚未使用基岩版进入过本服务器。");
@@ -280,8 +292,35 @@ public final class NeteaseAccountConfig {
         lines.add("");
         lines.add("&7请务必使用与当前 Java 版相同的网易账号。");
         lines.add("&7基岩版成功进入后，即可退出并重新使用 Java 版登录。");
-        lines.add("&8&m--------------------------------");
+        lines.add("");
+        lines.add(SUPPORT_QQ_PROMPT);
+        lines.add(SUPPORT_QQ_LABEL_PREFIX + DEFAULT_SUPPORT_QQ_GROUP);
+        lines.add(KICK_SEPARATOR);
         return lines;
+    }
+
+    private static List<String> withSupportQqGroup(List<String> lines, String supportQqGroup) {
+        List<String> result = new ArrayList<>();
+        for (String line : lines) {
+            if (!SUPPORT_QQ_PROMPT.equals(line) && !line.startsWith(SUPPORT_QQ_LABEL_PREFIX)) {
+                result.add(line);
+            }
+        }
+
+        if (supportQqGroup == null || supportQqGroup.trim().isEmpty()) {
+            return result;
+        }
+
+        int insertIndex = result.size();
+        if (insertIndex > 0 && KICK_SEPARATOR.equals(result.get(insertIndex - 1))) {
+            insertIndex--;
+        }
+        if (insertIndex > 0 && !result.get(insertIndex - 1).isEmpty()) {
+            result.add(insertIndex++, "");
+        }
+        result.add(insertIndex++, SUPPORT_QQ_PROMPT);
+        result.add(insertIndex, SUPPORT_QQ_LABEL_PREFIX + supportQqGroup.trim());
+        return result;
     }
 
     private static List<String> singletonList(String value) {
@@ -294,7 +333,8 @@ public final class NeteaseAccountConfig {
         return "# 梦想之城网易账号自动互通配置\n\n"
                 + "enabled: true\n"
                 + "uid-query-timeout-millis: 10000\n"
-                + "login-check-timeout-millis: 15000\n"
+                + "login-check-timeout-millis: 25000\n"
+                + "takeover-timeout-millis: 5000\n"
                 + "bootstrap-localprofile-on-startup: true\n\n"
                 + "account:\n"
                 + "  table: netease_account_profile\n\n"
@@ -305,11 +345,8 @@ public final class NeteaseAccountConfig {
                 + "  uid_from_uuid: \"http://gasproxy.mc.netease.com:60004/uid-from-uuid\"\n"
                 + "  key: \"<java app key>\"\n\n"
                 + "messages:\n"
-                + "  unresolved-prompt-interval-seconds: 10\n"
-                + "  unresolved-java-title: \"请先用基岩版进入一次\"\n"
-                + "  unresolved-java-notify: \"" + WARNING_PREFIX
-                + "请使用同一网易账号的基岩版进入本服一次，完成后重新使用 Java 版进入。\"\n"
-                + "  unresolved-java-subtitle: \"请使用同一网易账号的基岩版进入本服一次\"\n"
+                + "  # 玩家遇到账号互通问题时显示的官方支持群；留空可关闭该提示\n"
+                + "  support-qq-group: \"" + DEFAULT_SUPPORT_QQ_GROUP + "\"\n"
                 + "  # Java 尚无基岩档案时，由 Velocity 在登录阶段直接断开并显示以下内容\n"
                 + "  unresolved-java-kick:\n"
                 + "    - \"&8&m--------------------------------\"\n"
@@ -322,6 +359,9 @@ public final class NeteaseAccountConfig {
                 + "    - \"\"\n"
                 + "    - \"&7请务必使用与当前 Java 版相同的网易账号。\"\n"
                 + "    - \"&7基岩版成功进入后，即可退出并重新使用 Java 版登录。\"\n"
+                + "    - \"\"\n"
+                + "    - \"" + SUPPORT_QQ_PROMPT + "\"\n"
+                + "    - \"" + SUPPORT_QQ_LABEL_PREFIX + DEFAULT_SUPPORT_QQ_GROUP + "\"\n"
                 + "    - \"&8&m--------------------------------\"\n"
                 + "  linked-java-login-blocked-notify: \"" + WARNING_PREFIX
                 + "您关联的 Java 账号 %java_name% 进入服务器，已被阻止。\"\n"
@@ -354,8 +394,8 @@ public final class NeteaseAccountConfig {
         return loginCheckTimeoutMillis;
     }
 
-    public long unresolvedPromptIntervalSeconds() {
-        return unresolvedPromptIntervalSeconds;
+    public long takeoverTimeoutMillis() {
+        return takeoverTimeoutMillis;
     }
 
     public boolean bootstrapLocalProfileOnStartup() {
@@ -368,18 +408,6 @@ public final class NeteaseAccountConfig {
 
     public UidEndpoint javaEndpoint() {
         return javaEndpoint;
-    }
-
-    public String unresolvedJavaTitle() {
-        return unresolvedJavaTitle;
-    }
-
-    public String unresolvedJavaNotify() {
-        return unresolvedJavaNotify;
-    }
-
-    public String unresolvedJavaSubtitle() {
-        return unresolvedJavaSubtitle;
     }
 
     public String unresolvedJavaKickMessage() {

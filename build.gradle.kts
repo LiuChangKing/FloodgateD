@@ -40,4 +40,24 @@ subprojects {
         in deployProjects -> plugins.apply("floodgate.publish-conventions")
         else -> plugins.apply("floodgate.base-conventions")
     }
+
+    dependencies {
+        add("compileOnly", "org.projectlombok:lombok:1.18.36")
+        add("annotationProcessor", "org.projectlombok:lombok:1.18.36")
+        add("testCompileOnly", "org.projectlombok:lombok:1.18.36")
+        add("testAnnotationProcessor", "org.projectlombok:lombok:1.18.36")
+        add("lombok", "org.projectlombok:lombok:1.18.36")
+        add("testImplementation", "org.junit.jupiter:junit-jupiter:5.10.3")
+    }
+
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        useJUnitPlatform()
+    }
+
+    val javaToolchains = extensions.getByType<org.gradle.jvm.toolchain.JavaToolchainService>()
+    tasks.withType<org.gradle.api.tasks.javadoc.Javadoc>().configureEach {
+        javadocTool.set(javaToolchains.javadocToolFor {
+            languageVersion.set(org.gradle.jvm.toolchain.JavaLanguageVersion.of(21))
+        })
+    }
 }

@@ -38,12 +38,13 @@ public final class VelocityListenerModule extends AbstractModule {
     @Override
     protected void configure() {
         bind(new TypeLiteral<ListenerRegister<Object>>() {}).asEagerSingleton();
+        bind(NeteaseAccountVelocityService.class).in(Singleton.class);
     }
 
     @Singleton
     @ProvidesIntoSet
-    public Object velocityListener() {
-        return new VelocityListener();
+    public Object velocityListener(NeteaseAccountVelocityService neteaseAccountService) {
+        return new VelocityListener(neteaseAccountService);
     }
 
     @Singleton
