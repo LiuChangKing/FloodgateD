@@ -30,7 +30,7 @@ final class NeteaseAccountDreamEngineUi {
     private void openJavaMenu(Player player) {
         CrossPlatformMenu<String> menu = CrossUI.stringMenu(player)
                 .title(color("账号互通关联"))
-                .content(color("当前项目已改为网易 UID 自动识别。\n如果同一网易账号的基岩档案已存在，Java 入口会自动继承对应基岩身份。"))
+                .content(color("当前项目使用网易 UID 自动识别。\nJava 入口会自动查询并继承同网易账号的基岩身份。"))
                 .buttonAt(13, Material.COMPASS, "查看自动识别状态", lore(
                         "查看当前入口类型、Java UUID",
                         "以及 Java/Bedrock UID 匹配状态"
@@ -46,7 +46,7 @@ final class NeteaseAccountDreamEngineUi {
     private void openBedrockMenu(Player player) {
         CrossPlatformMenu<String> menu = CrossUI.stringMenu(player)
                 .title(color("账号互通关联"))
-                .content(color("当前基岩档案会作为同网易账号 Java 入口的继承身份。\n首次进入后，Java 入口即可自动使用本基岩档案。"));
+                .content(color("当前基岩档案会作为同网易账号 Java 入口的继承身份。\n账号信息将通过网易 UID 自动保持一致。"));
         buttonWithIcon(menu, "查看自动识别状态", ICON_STATUS, ACTION_STATUS);
         menu.onClick(event -> {
             if (ACTION_STATUS.equals(event.getPayload())) {

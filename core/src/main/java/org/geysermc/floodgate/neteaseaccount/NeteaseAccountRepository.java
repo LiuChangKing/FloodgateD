@@ -4,13 +4,13 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.SQLIntegrityConstraintViolationException;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import javax.sql.DataSource;
@@ -372,22 +372,83 @@ public final class NeteaseAccountRepository {
         return result;
     }
 
-    public void ensureLocalProfile(UUID id, String name, String type) throws SQLException {
-        if (findLocalProfile(id, type).isPresent()) {
-            return;
+    public LocalProfile ensureLocalProfile(UUID id, String name, String type) throws SQLException {
+        if (id == null || name == null || name.trim().isEmpty() || type == null || type.trim().isEmpty()) {
+            throw new SQLException("localprofile id, name and type are required");
         }
 
+        String normalizedType = type.toLowerCase(Locale.ROOT);
+        Optional<LocalProfile> existing = findLocalProfileById(id);
+        if (existing.isPresent()) {
+            return requireProfileType(existing.get(), normalizedType);
+        }
+
+        String originalName = name.trim();
+        for (int collision = 0; collision < 10000; collision++) {
+            String reservedName = collision == 0
+                    ? originalName
+                    : withCollisionSuffix(originalName, collision);
+            try (Connection connection = dataSource.getConnection();
+                 PreparedStatement statement = connection.prepareStatement(
+                         "INSERT INTO localprofile(id, name, name_origin, pc_pe) VALUES (?, ?, ?, ?)")) {
+                statement.setString(1, id.toString());
+                statement.setString(2, reservedName);
+                statement.setString(3, originalName);
+                statement.setString(4, normalizedType);
+                statement.executeUpdate();
+                return new LocalProfile(id, reservedName, originalName, normalizedType);
+            } catch (SQLException exception) {
+                if (!isDuplicateKey(exception)) {
+                    throw exception;
+                }
+                existing = findLocalProfileById(id);
+                if (existing.isPresent()) {
+                    return requireProfileType(existing.get(), normalizedType);
+                }
+                // The UUID is still absent, so the unique name was claimed concurrently.
+            }
+        }
+        throw new SQLException("Unable to reserve a unique localprofile name for " + originalName);
+    }
+
+    private Optional<LocalProfile> findLocalProfileById(UUID id) throws SQLException {
         try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(
-                     "INSERT INTO localprofile(id, name, name_origin, pc_pe) VALUES (?, ?, ?, ?)")) {
+                     "SELECT id, name, name_origin, pc_pe FROM localprofile WHERE id = ?")) {
             statement.setString(1, id.toString());
-            statement.setString(2, name);
-            statement.setString(3, name);
-            statement.setString(4, type.toLowerCase());
-            statement.executeUpdate();
-        } catch (SQLIntegrityConstraintViolationException ignored) {
-            // Floodgate may have inserted the same profile earlier in the login pipeline.
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (!resultSet.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(new LocalProfile(
+                        UUID.fromString(resultSet.getString("id")),
+                        resultSet.getString("name"),
+                        resultSet.getString("name_origin"),
+                        resultSet.getString("pc_pe")
+                ));
+            }
         }
+    }
+
+    private static LocalProfile requireProfileType(LocalProfile profile, String expectedType)
+            throws SQLException {
+        if (!expectedType.equalsIgnoreCase(profile.type())) {
+            throw new SQLException("localprofile UUID " + profile.id() + " is already registered as "
+                    + profile.type() + " instead of " + expectedType);
+        }
+        return profile;
+    }
+
+    private static boolean isDuplicateKey(SQLException exception) {
+        return "23000".equals(exception.getSQLState()) || exception.getErrorCode() == 1062;
+    }
+
+    private static String withCollisionSuffix(String name, int collision) {
+        String suffix = "_" + collision;
+        int availableCodePoints = Math.max(0, 16 - suffix.length());
+        int codePoints = name.codePointCount(0, name.length());
+        int end = name.offsetByCodePoints(0, Math.min(codePoints, availableCodePoints));
+        return name.substring(0, end) + suffix;
     }
 
     public static String deriveBedrockXuid(UUID bedrockUuid) {

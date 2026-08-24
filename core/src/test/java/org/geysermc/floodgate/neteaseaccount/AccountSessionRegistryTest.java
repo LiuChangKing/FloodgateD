@@ -76,14 +76,14 @@ final class AccountSessionRegistryTest {
     @Test
     void resolvesCrossPlatformConflictsBeforeVelocityDuplicateChecks() {
         assertEquals(
-                AccountSessionRegistry.ConflictAction.TAKE_OVER_BOUND_JAVA,
+                AccountSessionRegistry.ConflictAction.TAKE_OVER_EXISTING,
                 AccountSessionRegistry.conflictAction(EntryType.BEDROCK, EntryType.BOUND_JAVA));
+        assertEquals(
+                AccountSessionRegistry.ConflictAction.TAKE_OVER_EXISTING,
+                AccountSessionRegistry.conflictAction(EntryType.BEDROCK, EntryType.BEDROCK));
         assertEquals(
                 AccountSessionRegistry.ConflictAction.NOTIFY_BEDROCK_AND_DENY,
                 AccountSessionRegistry.conflictAction(EntryType.BOUND_JAVA, EntryType.BEDROCK));
-        assertEquals(
-                AccountSessionRegistry.ConflictAction.DENY,
-                AccountSessionRegistry.conflictAction(EntryType.BEDROCK, EntryType.BEDROCK));
         assertEquals(
                 AccountSessionRegistry.ConflictAction.NONE,
                 AccountSessionRegistry.conflictAction(EntryType.BEDROCK, null));

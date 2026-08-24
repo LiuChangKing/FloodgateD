@@ -11,14 +11,17 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import org.geysermc.floodgate.util.Utils;
 
 public final class NeteaseUidResolver {
     private static final String METHOD = "POST";
     private static final String DEFAULT_SIGNATURE_PATH = "/uid-from-uuid";
+    private static final String BEDROCK_IDENTITY_SIGNATURE_PATH = "/uuid-xuid-from-uid-name";
     private static final int MAX_RESPONSE_BYTES = 64 * 1024;
     private static final String OFFICIAL_HTTP_HOST = "gasproxy.mc.netease.com";
     private static final long JAVA_UID_MAX = 0x7fffffffL;
@@ -43,9 +46,42 @@ public final class NeteaseUidResolver {
         }
 
         String body = "{\"uuid\":\"" + uuid + "\"}";
-        byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
         URL url = new URL(endpoint.url());
         validateEndpointUrl(url, uidType);
+
+        return parseUid(post(endpoint, url, body, "uid-from-uuid"), uidType);
+    }
+
+    public Optional<BedrockIdentity> resolveBedrockIdentity(
+            NeteaseAccountConfig.UidEndpoint endpoint,
+            long bedrockUid,
+            String currentGameName) throws IOException {
+        if (endpoint == null || !endpoint.configured()) {
+            throw new IOException("NetEase uuid-xuid-from-uid-name endpoint or key is not configured");
+        }
+        if (!isValidBedrockUid(bedrockUid)) {
+            throw new IOException("NetEase uuid-xuid-from-uid-name requires a valid Bedrock UID");
+        }
+        if (currentGameName == null || currentGameName.trim().isEmpty()) {
+            throw new IOException("NetEase uuid-xuid-from-uid-name requires the current game name");
+        }
+
+        JsonObject request = new JsonObject();
+        request.addProperty("uid", bedrockUid);
+        request.addProperty("name", currentGameName);
+        String body = request.toString();
+        URL url = new URL(endpoint.url());
+        validateBedrockIdentityEndpointUrl(url);
+
+        return parseBedrockIdentity(post(endpoint, url, body, "uuid-xuid-from-uid-name"));
+    }
+
+    private String post(
+            NeteaseAccountConfig.UidEndpoint endpoint,
+            URL url,
+            String body,
+            String operation) throws IOException {
+        byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
 
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod(METHOD);
@@ -68,9 +104,9 @@ public final class NeteaseUidResolver {
                     ? connection.getInputStream()
                     : connection.getErrorStream());
             if (status < 200 || status >= 300) {
-                throw new IOException("NetEase uid-from-uuid returned HTTP " + status + ": " + response);
+                throw new IOException("NetEase " + operation + " returned HTTP " + status + ": " + response);
             }
-            return parseUid(response, uidType);
+            return response;
         } finally {
             connection.disconnect();
         }
@@ -103,6 +139,43 @@ public final class NeteaseUidResolver {
         }
     }
 
+    static Optional<BedrockIdentity> parseBedrockIdentity(String response) {
+        if (response == null || response.trim().isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            JsonElement rootElement = JsonParser.parseString(response);
+            if (!rootElement.isJsonObject()) {
+                return Optional.empty();
+            }
+            JsonObject root = rootElement.getAsJsonObject();
+            JsonElement code = root.get("code");
+            JsonElement entityElement = root.get("entity");
+            if (code == null || !code.isJsonPrimitive() || code.getAsInt() != 0
+                    || entityElement == null || !entityElement.isJsonObject()) {
+                return Optional.empty();
+            }
+
+            JsonObject entity = entityElement.getAsJsonObject();
+            JsonElement uuidElement = entity.get("uuid");
+            JsonElement xuidElement = entity.get("xuid");
+            if (uuidElement == null || !uuidElement.isJsonPrimitive()
+                    || xuidElement == null || !xuidElement.isJsonPrimitive()) {
+                return Optional.empty();
+            }
+
+            UUID apiUuid = UUID.fromString(uuidElement.getAsString().trim());
+            String xuid = xuidElement.getAsString().trim();
+            if (xuid.isEmpty() || xuid.length() > 64) {
+                return Optional.empty();
+            }
+            UUID floodgateUuid = Utils.getJavaUuid(xuid);
+            return Optional.of(new BedrockIdentity(apiUuid, floodgateUuid, xuid));
+        } catch (RuntimeException exception) {
+            return Optional.empty();
+        }
+    }
+
     static void validateEndpointUrl(URL url, UidType uidType) throws IOException {
         if (url == null || uidType == null) {
             throw new IOException("NetEase uid-from-uuid endpoint and type are required");
@@ -124,6 +197,36 @@ public final class NeteaseUidResolver {
                 throw new IOException("Insecure HTTP is only allowed for the official NetEase "
                         + uidType.name().toLowerCase(Locale.ROOT) + " uid-from-uuid endpoint");
             }
+        }
+    }
+
+    static void validateBedrockIdentityEndpointUrl(URL url) throws IOException {
+        validateHttpEndpointShape(url, BEDROCK_IDENTITY_SIGNATURE_PATH,
+                "uuid-xuid-from-uid-name");
+        if ("http".equalsIgnoreCase(url.getProtocol())) {
+            int port = url.getPort();
+            if (!OFFICIAL_HTTP_HOST.equalsIgnoreCase(url.getHost()) || (port != 60001 && port != 60002)) {
+                throw new IOException("Insecure HTTP is only allowed for the official NetEase Bedrock "
+                        + "uuid-xuid-from-uid-name endpoint");
+            }
+        }
+    }
+
+    private static void validateHttpEndpointShape(URL url, String expectedPath, String operation)
+            throws IOException {
+        if (url == null) {
+            throw new IOException("NetEase " + operation + " endpoint is required");
+        }
+        String protocol = url.getProtocol();
+        if (!"http".equalsIgnoreCase(protocol) && !"https".equalsIgnoreCase(protocol)) {
+            throw new IOException("Unsupported " + operation + " protocol: " + protocol);
+        }
+        if (url.getHost() == null || url.getHost().isEmpty()
+                || url.getUserInfo() != null
+                || url.getQuery() != null
+                || url.getRef() != null
+                || !expectedPath.equals(url.getPath())) {
+            throw new IOException("Invalid NetEase " + operation + " endpoint URL");
         }
     }
 
@@ -176,7 +279,7 @@ public final class NeteaseUidResolver {
             while ((read = in.read(buffer)) >= 0) {
                 total += read;
                 if (total > MAX_RESPONSE_BYTES) {
-                    throw new IOException("NetEase uid-from-uuid response exceeds 64 KiB");
+                    throw new IOException("NetEase account response exceeds 64 KiB");
                 }
                 output.write(buffer, 0, read);
             }
@@ -198,6 +301,30 @@ public final class NeteaseUidResolver {
 
         private boolean isValid(long uid) {
             return this == JAVA ? isValidJavaUid(uid) : isValidBedrockUid(uid);
+        }
+    }
+
+    public static final class BedrockIdentity {
+        private final UUID apiUuid;
+        private final UUID floodgateUuid;
+        private final String xuid;
+
+        private BedrockIdentity(UUID apiUuid, UUID floodgateUuid, String xuid) {
+            this.apiUuid = apiUuid;
+            this.floodgateUuid = floodgateUuid;
+            this.xuid = xuid;
+        }
+
+        public UUID apiUuid() {
+            return apiUuid;
+        }
+
+        public UUID floodgateUuid() {
+            return floodgateUuid;
+        }
+
+        public String xuid() {
+            return xuid;
         }
     }
 }

@@ -15,10 +15,6 @@ public final class NeteaseAccountConfig {
     private static final String COMMAND_ALIASES = "naccount";
     private static final String WARNING_PREFIX = "&8[&e&l!&8] &e";
     private static final String ERROR_PREFIX = "&8[&c&l!&8] &c";
-    private static final String DEFAULT_SUPPORT_QQ_GROUP = "519586736";
-    private static final String SUPPORT_QQ_PROMPT = "&e如遇任何问题，可加入官方 QQ 群咨询解决。";
-    private static final String SUPPORT_QQ_LABEL_PREFIX = "&b&lQQ群：";
-    private static final String KICK_SEPARATOR = "&8&m--------------------------------";
 
     private final boolean enabled;
     private final String accountTable;
@@ -27,8 +23,8 @@ public final class NeteaseAccountConfig {
     private final long takeoverTimeoutMillis;
     private final boolean bootstrapLocalProfileOnStartup;
     private final UidEndpoint bedrockEndpoint;
+    private final UidEndpoint bedrockIdentityEndpoint;
     private final UidEndpoint javaEndpoint;
-    private final List<String> unresolvedJavaKickLines;
     private final String linkedJavaLoginBlockedNotifyMessage;
     private final String accountSystemUnavailableMessage;
     private final String accountSystemTimeoutMessage;
@@ -42,8 +38,8 @@ public final class NeteaseAccountConfig {
             long takeoverTimeoutMillis,
             boolean bootstrapLocalProfileOnStartup,
             UidEndpoint bedrockEndpoint,
+            UidEndpoint bedrockIdentityEndpoint,
             UidEndpoint javaEndpoint,
-            List<String> unresolvedJavaKickLines,
             String linkedJavaLoginBlockedNotifyMessage,
             String accountSystemUnavailableMessage,
             String accountSystemTimeoutMessage,
@@ -55,8 +51,8 @@ public final class NeteaseAccountConfig {
         this.takeoverTimeoutMillis = takeoverTimeoutMillis;
         this.bootstrapLocalProfileOnStartup = bootstrapLocalProfileOnStartup;
         this.bedrockEndpoint = bedrockEndpoint;
+        this.bedrockIdentityEndpoint = bedrockIdentityEndpoint;
         this.javaEndpoint = javaEndpoint;
-        this.unresolvedJavaKickLines = new ArrayList<>(unresolvedJavaKickLines);
         this.linkedJavaLoginBlockedNotifyMessage = linkedJavaLoginBlockedNotifyMessage;
         this.accountSystemUnavailableMessage = accountSystemUnavailableMessage;
         this.accountSystemTimeoutMessage = accountSystemTimeoutMessage;
@@ -76,11 +72,7 @@ public final class NeteaseAccountConfig {
                 values,
                 "login-check-timeout-millis",
                 Math.max(5000L, safeAdd(safeMultiply(uidTimeout, 2L), 5000L)));
-        String supportQqGroup = getScalar(
-                values, "messages.support-qq-group", DEFAULT_SUPPORT_QQ_GROUP).trim();
-        List<String> unresolvedJavaKickLines = withSupportQqGroup(
-                getList(values, "messages.unresolved-java-kick", defaultUnresolvedJavaKickLines()),
-                supportQqGroup);
+        String bedrockKey = getScalar(values, "bedrock.key", "").trim();
         return new NeteaseAccountConfig(
                 Boolean.parseBoolean(getScalar(values, "enabled", "true").trim()),
                 getScalar(values, "account.table", "netease_account_profile").trim(),
@@ -91,14 +83,18 @@ public final class NeteaseAccountConfig {
                 new UidEndpoint(
                         getScalar(values, "bedrock.uid_from_uuid",
                                 "http://gasproxy.mc.netease.com:60003/uid-from-uuid").trim(),
-                        getScalar(values, "bedrock.key", "").trim()
+                        bedrockKey
+                ),
+                new UidEndpoint(
+                        getScalar(values, "bedrock.uuid_xuid_from_uid_name",
+                                "http://gasproxy.mc.netease.com:60002/uuid-xuid-from-uid-name").trim(),
+                        bedrockKey
                 ),
                 new UidEndpoint(
                         getScalar(values, "java.uid_from_uuid",
                                 "http://gasproxy.mc.netease.com:60004/uid-from-uuid").trim(),
                         getScalar(values, "java.key", "").trim()
                 ),
-                unresolvedJavaKickLines,
                 getScalar(
                         values,
                         "messages.linked-java-login-blocked-notify",
@@ -272,57 +268,6 @@ public final class NeteaseAccountConfig {
         return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
     }
 
-    private static List<String> getList(
-            Map<String, List<String>> values,
-            String key,
-            List<String> fallback) {
-        List<String> list = values.get(key);
-        return list == null || list.isEmpty() ? fallback : new ArrayList<>(list);
-    }
-
-    private static List<String> defaultUnresolvedJavaKickLines() {
-        List<String> lines = new ArrayList<>();
-        lines.add(KICK_SEPARATOR);
-        lines.add("&e&l账号互通需要初始化");
-        lines.add("");
-        lines.add("&f检测到您尚未使用基岩版进入过本服务器。");
-        lines.add("&f请先使用以下任一客户端进入本服一次：");
-        lines.add("&a1. 网易基岩互通版");
-        lines.add("&a2. 网易手游我的世界");
-        lines.add("");
-        lines.add("&7请务必使用与当前 Java 版相同的网易账号。");
-        lines.add("&7基岩版成功进入后，即可退出并重新使用 Java 版登录。");
-        lines.add("");
-        lines.add(SUPPORT_QQ_PROMPT);
-        lines.add(SUPPORT_QQ_LABEL_PREFIX + DEFAULT_SUPPORT_QQ_GROUP);
-        lines.add(KICK_SEPARATOR);
-        return lines;
-    }
-
-    private static List<String> withSupportQqGroup(List<String> lines, String supportQqGroup) {
-        List<String> result = new ArrayList<>();
-        for (String line : lines) {
-            if (!SUPPORT_QQ_PROMPT.equals(line) && !line.startsWith(SUPPORT_QQ_LABEL_PREFIX)) {
-                result.add(line);
-            }
-        }
-
-        if (supportQqGroup == null || supportQqGroup.trim().isEmpty()) {
-            return result;
-        }
-
-        int insertIndex = result.size();
-        if (insertIndex > 0 && KICK_SEPARATOR.equals(result.get(insertIndex - 1))) {
-            insertIndex--;
-        }
-        if (insertIndex > 0 && !result.get(insertIndex - 1).isEmpty()) {
-            result.add(insertIndex++, "");
-        }
-        result.add(insertIndex++, SUPPORT_QQ_PROMPT);
-        result.add(insertIndex, SUPPORT_QQ_LABEL_PREFIX + supportQqGroup.trim());
-        return result;
-    }
-
     private static List<String> singletonList(String value) {
         List<String> list = new ArrayList<>();
         list.add(value);
@@ -340,29 +285,12 @@ public final class NeteaseAccountConfig {
                 + "  table: netease_account_profile\n\n"
                 + "bedrock:\n"
                 + "  uid_from_uuid: \"http://gasproxy.mc.netease.com:60003/uid-from-uuid\"\n"
+                + "  uuid_xuid_from_uid_name: \"http://gasproxy.mc.netease.com:60002/uuid-xuid-from-uid-name\"\n"
                 + "  key: \"<bedrock app key>\"\n\n"
                 + "java:\n"
                 + "  uid_from_uuid: \"http://gasproxy.mc.netease.com:60004/uid-from-uuid\"\n"
                 + "  key: \"<java app key>\"\n\n"
                 + "messages:\n"
-                + "  # 玩家遇到账号互通问题时显示的官方支持群；留空可关闭该提示\n"
-                + "  support-qq-group: \"" + DEFAULT_SUPPORT_QQ_GROUP + "\"\n"
-                + "  # Java 尚无基岩档案时，由 Velocity 在登录阶段直接断开并显示以下内容\n"
-                + "  unresolved-java-kick:\n"
-                + "    - \"&8&m--------------------------------\"\n"
-                + "    - \"&e&l账号互通需要初始化\"\n"
-                + "    - \"\"\n"
-                + "    - \"&f检测到您尚未使用基岩版进入过本服务器。\"\n"
-                + "    - \"&f请先使用以下任一客户端进入本服一次：\"\n"
-                + "    - \"&a1. 网易基岩互通版\"\n"
-                + "    - \"&a2. 网易手游我的世界\"\n"
-                + "    - \"\"\n"
-                + "    - \"&7请务必使用与当前 Java 版相同的网易账号。\"\n"
-                + "    - \"&7基岩版成功进入后，即可退出并重新使用 Java 版登录。\"\n"
-                + "    - \"\"\n"
-                + "    - \"" + SUPPORT_QQ_PROMPT + "\"\n"
-                + "    - \"" + SUPPORT_QQ_LABEL_PREFIX + DEFAULT_SUPPORT_QQ_GROUP + "\"\n"
-                + "    - \"&8&m--------------------------------\"\n"
                 + "  linked-java-login-blocked-notify: \"" + WARNING_PREFIX
                 + "您关联的 Java 账号 %java_name% 进入服务器，已被阻止。\"\n"
                 + "  account-system-unavailable: \"" + ERROR_PREFIX + "账号互通服务暂时不可用，请稍后重试\"\n"
@@ -406,12 +334,12 @@ public final class NeteaseAccountConfig {
         return bedrockEndpoint;
     }
 
-    public UidEndpoint javaEndpoint() {
-        return javaEndpoint;
+    public UidEndpoint bedrockIdentityEndpoint() {
+        return bedrockIdentityEndpoint;
     }
 
-    public String unresolvedJavaKickMessage() {
-        return String.join("\n", unresolvedJavaKickLines);
+    public UidEndpoint javaEndpoint() {
+        return javaEndpoint;
     }
 
     public String linkedJavaLoginBlockedNotifyMessage() {

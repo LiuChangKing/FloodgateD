@@ -47,8 +47,8 @@ public final class AccountSessionRegistry<T> {
         if (existing == null) {
             return ConflictAction.NONE;
         }
-        if (incoming == EntryType.BEDROCK && existing == EntryType.BOUND_JAVA) {
-            return ConflictAction.TAKE_OVER_BOUND_JAVA;
+        if (incoming == EntryType.BEDROCK) {
+            return ConflictAction.TAKE_OVER_EXISTING;
         }
         if (incoming == EntryType.BOUND_JAVA && existing == EntryType.BEDROCK) {
             return ConflictAction.NOTIFY_BEDROCK_AND_DENY;
@@ -58,7 +58,7 @@ public final class AccountSessionRegistry<T> {
 
     public enum ConflictAction {
         NONE,
-        TAKE_OVER_BOUND_JAVA,
+        TAKE_OVER_EXISTING,
         NOTIFY_BEDROCK_AND_DENY,
         DENY
     }

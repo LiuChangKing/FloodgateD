@@ -72,12 +72,17 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
     private static final String LEGACY_FLOODGATE_UUID_MARKER = "00000000-0000-4000-8000";
     private static final String BEDROCK_TAKEOVER_JAVA_DISCONNECT =
             "&8[&e&l!&8] &e你的基岩账号已从基岩端登录，Java 入口会话已下线";
+    private static final String BEDROCK_RECONNECT_DISCONNECT =
+            "&8[&e&l!&8] &e同一网易账号已建立新的基岩连接，旧连接已自动断开";
     private static final String JAVA_WHILE_BEDROCK_DENIED =
             "&8[&c&l!&8] &c你的同网易账号基岩身份已在线，不能同时从 Java 入口进入";
     private static final String ACCOUNT_ACTIVE_DENIED =
             "&8[&c&l!&8] &c该网易账号正在登录或已经在线，请稍后重试";
     private static final String BEDROCK_TAKEOVER_TIMEOUT =
             "&8[&c&l!&8] &c基岩身份接管超时，请稍后重新进入服务器";
+    private static final String DEFAULT_ADMIN_KICK_REASON =
+            "管理员正在清理异常登录会话，请重新进入服务器。";
+    private static final long KICK_VERIFICATION_INTERVAL_MILLIS = 100L;
 
     private final ProxyServer proxy;
     private final ProxyFloodgateApi floodgateApi;
@@ -124,7 +129,8 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
             proxy.getChannelRegistrar().register(bridgeChannel);
             proxy.getCommandManager().register(commandMeta, this);
             NeteaseAccountBridge.setInstance(this);
-            logger.info("Netease account auto-unify enabled. unresolved Java logins are blocked at proxy, table={}.",
+            logger.info("Netease account auto-unify enabled. first-time Java profiles are resolved automatically, "
+                            + "table={}.",
                     config.accountTable());
             if (config.bootstrapLocalProfileOnStartup()) {
                 commandExecutor.execute(this::bootstrapLocalProfiles);
@@ -148,7 +154,21 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
 
     private void validateEnabledConfig() {
         validateEndpoint("Bedrock", config.bedrockEndpoint(), NeteaseUidResolver.UidType.BEDROCK);
+        validateBedrockIdentityEndpoint(config.bedrockIdentityEndpoint());
         validateEndpoint("Java", config.javaEndpoint(), NeteaseUidResolver.UidType.JAVA);
+    }
+
+    private static void validateBedrockIdentityEndpoint(NeteaseAccountConfig.UidEndpoint endpoint) {
+        if (endpoint == null || !endpoint.configured()) {
+            throw new IllegalStateException("Bedrock Netease uuid-xuid-from-uid-name endpoint/key "
+                    + "is not configured in netease-account.yml");
+        }
+        try {
+            NeteaseUidResolver.validateBedrockIdentityEndpointUrl(new URL(endpoint.url()));
+        } catch (IOException exception) {
+            throw new IllegalStateException("Bedrock Netease uuid-xuid-from-uid-name endpoint is invalid: "
+                    + exception.getMessage(), exception);
+        }
     }
 
     private static void validateEndpoint(
@@ -310,24 +330,37 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
         }
 
         if (!accountProfile.isPresent()) {
-            logUnresolvedJava(repository, event, javaUuid, javaUid.getAsLong(), bedrockUid,
-                    JavaLoginBlockReason.BEDROCK_PROFILE_NOT_FOUND, null);
-            return LoginDecision.deny(config.unresolvedJavaKickMessage());
+            Optional<NeteaseUidResolver.BedrockIdentity> identity = queryBedrockIdentity(
+                    bedrockUid, event.getUsername());
+            if (!loginCheck.isOpen()) {
+                return null;
+            }
+            if (!identity.isPresent()) {
+                logBlockedJava(repository, event, javaUuid, javaUid.getAsLong(), bedrockUid,
+                        JavaLoginBlockReason.BEDROCK_IDENTITY_LOOKUP_FAILED,
+                        "GameName=" + event.getUsername());
+                return LoginDecision.deny(config.accountSystemUnavailableMessage());
+            }
+
+            NeteaseUidResolver.BedrockIdentity resolved = identity.get();
+            repository.upsertBedrockProfile(
+                    bedrockUid, resolved.floodgateUuid(), resolved.xuid());
+            accountProfile = Optional.of(new NeteaseAccountProfile(
+                    bedrockUid, resolved.floodgateUuid(), resolved.xuid()));
+            logger.info("Created Bedrock Netease profile from Java login: javaName={}, bedrockUid={}, "
+                            + "apiUuid={}, xuid={}, floodgateUuid={}",
+                    event.getUsername(), bedrockUid, resolved.apiUuid(), resolved.xuid(),
+                    resolved.floodgateUuid());
         }
 
         UUID bedrockUuid = accountProfile.get().bedrockUuid();
-        Optional<LocalProfile> bedrockLocalProfile = repository.findLocalProfile(bedrockUuid, "pe");
+        LocalProfile bedrockLocalProfile = repository.ensureLocalProfile(
+                bedrockUuid, event.getUsername(), "pe");
         if (!loginCheck.isOpen()) {
             return null;
         }
-        if (!bedrockLocalProfile.isPresent()) {
-            logUnresolvedJava(repository, event, javaUuid, javaUid.getAsLong(), bedrockUid,
-                    JavaLoginBlockReason.BEDROCK_LOCAL_PROFILE_NOT_FOUND,
-                    "BedrockUUID=" + bedrockUuid);
-            return LoginDecision.deny(config.unresolvedJavaKickMessage());
-        }
 
-        String finalName = bedrockLocalProfile.get().name();
+        String finalName = bedrockLocalProfile.name();
         GameProfile oldProfile = event.getGameProfile();
         GameProfile unifiedProfile = new GameProfile(
                 bedrockUuid,
@@ -362,12 +395,15 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
             UUID originalJavaUuid,
             String javaLoginName) {
         AccountSessionRegistry.Session<Player> existing = activeAccountSession(accountUuid);
+        if (existing == null && incomingType == EntryType.BEDROCK) {
+            existing = registeredProxySession(accountUuid);
+        }
         AccountSessionRegistry.ConflictAction action = AccountSessionRegistry.conflictAction(
                 incomingType, existing == null ? null : existing.entryType());
         switch (action) {
             case NONE:
                 return allowDecision;
-            case TAKE_OVER_BOUND_JAVA:
+            case TAKE_OVER_EXISTING:
                 return allowDecision.withTakeoverSession(existing);
             case NOTIFY_BEDROCK_AND_DENY:
                 sendLinkedJavaLoginBlockedNotify(existing.connection(), javaLoginName);
@@ -380,7 +416,7 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
         }
     }
 
-    private void logUnresolvedJava(
+    private void logBlockedJava(
             NeteaseAccountRepository repository,
             GameProfileRequestEvent event,
             UUID javaUuid,
@@ -398,7 +434,7 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
         } catch (SQLException exception) {
             logger.error("无法将被阻止的 Java 登录写入 MySQL 审计日志", exception);
         }
-        logger.warn("已阻止缺少基岩档案的 Java 玩家登录: 玩家={}, JavaUUID={}, "
+        logger.warn("已阻止无法自动解析基岩身份的 Java 玩家登录: 玩家={}, JavaUUID={}, "
                         + "JavaUID={}, BedrockUID={}, 错误码={}, 原因={}",
                 event.getUsername(), javaUuid, javaUid, bedrockUid, reasonCode.code(), reason);
     }
@@ -414,6 +450,19 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
             logger.warn("{} Netease uid-from-uuid query failed for {}: {}",
                     side, uuid, exception.getMessage());
             return OptionalLong.empty();
+        }
+    }
+
+    private Optional<NeteaseUidResolver.BedrockIdentity> queryBedrockIdentity(
+            long bedrockUid,
+            String currentGameName) {
+        try {
+            return uidResolver.resolveBedrockIdentity(
+                    config.bedrockIdentityEndpoint(), bedrockUid, currentGameName);
+        } catch (IOException exception) {
+            logger.warn("Bedrock Netease uuid-xuid-from-uid-name query failed for uid={} name={}: {}",
+                    bedrockUid, currentGameName, exception.getMessage());
+            return Optional.empty();
         }
     }
 
@@ -547,9 +596,9 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
             return;
         }
 
-        previous.connection().disconnect(message(BEDROCK_TAKEOVER_JAVA_DISCONNECT));
-        logger.info("Disconnecting bound Java session {} before Bedrock uuid {} reaches Velocity duplicate checks",
-                previous.originalJavaUuid(), previous.accountUuid());
+        previous.connection().disconnect(message(takeoverDisconnectMessage(previous)));
+        logger.info("正在 Velocity 重复登录检查前接管旧网易账号会话: uuid={}, oldType={}, oldPlayer={}",
+                previous.accountUuid(), previous.entryType(), previous.connection().getUsername());
     }
 
     private boolean schedulePreRegistrationTakeoverCheck(
@@ -683,9 +732,8 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
             }
 
             if (incoming.entryType() == EntryType.BEDROCK
-                    && existing.entryType() == EntryType.BOUND_JAVA
                     && accountSessions.replace(existing, incoming)) {
-                existing.connection().disconnect(message(BEDROCK_TAKEOVER_JAVA_DISCONNECT));
+                existing.connection().disconnect(message(takeoverDisconnectMessage(existing)));
                 scheduleTakeoverCheck(event, continuation, incoming, existing, System.nanoTime());
                 return;
             }
@@ -1107,6 +1155,40 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
         }
     }
 
+    private AccountSessionRegistry.Session<Player> registeredProxySession(UUID accountUuid) {
+        Optional<Player> registered = proxy.getPlayer(accountUuid);
+        if (!registered.isPresent()) {
+            return null;
+        }
+
+        Player player = registered.get();
+        AccountSessionRegistry.Session<Player> markedSession = sessionFrom(player);
+        if (markedSession != null) {
+            logger.info("发现未登记但仍占用统一 UUID 的网易账号会话: uuid={}, type={}, player={}",
+                    accountUuid, markedSession.entryType(), player.getUsername());
+            return markedSession;
+        }
+
+        EntryType entryType = isKnownFloodgatePlayer(accountUuid) ? EntryType.BEDROCK : EntryType.UNKNOWN;
+        logger.warn("发现缺少会话标记但仍占用统一 UUID 的代理连接: uuid={}, inferredType={}, player={}",
+                accountUuid, entryType, player.getUsername());
+        return new AccountSessionRegistry.Session<>(
+                accountUuid,
+                UUID.randomUUID(),
+                entryType,
+                player,
+                null,
+                null,
+                bedrockUidByPlayerUuid.get(accountUuid),
+                null);
+    }
+
+    private static String takeoverDisconnectMessage(AccountSessionRegistry.Session<Player> previous) {
+        return previous.entryType() == EntryType.BOUND_JAVA
+                ? BEDROCK_TAKEOVER_JAVA_DISCONNECT
+                : BEDROCK_RECONNECT_DISCONNECT;
+    }
+
     private boolean discardInactiveSession(AccountSessionRegistry.Session<Player> session) {
         if (session.connection().isActive()) {
             return false;
@@ -1264,13 +1346,18 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
             source.sendMessage(warning("请在子服中使用该命令，以打开账号互通界面"));
             return;
         }
-        if (!isOnlineCommand(args)) {
-            source.sendMessage(warning("控制台用法: /" + config.commandName()
-                    + " online [all|玩家名]"));
+        if (!isOnlineCommand(args) && !isKickCommand(args)) {
+            sendConsoleCommandUsage(source);
             return;
         }
         try {
-            commandExecutor.execute(() -> showOnlinePlayers(source, args));
+            commandExecutor.execute(() -> {
+                if (isOnlineCommand(args)) {
+                    showOnlinePlayers(source, args);
+                } else {
+                    kickOnlinePlayer(source, args);
+                }
+            });
         } catch (RejectedExecutionException exception) {
             source.sendMessage(error("账号互通服务繁忙，请稍后重试"));
             logger.warn("Netease account console command executor rejected a request");
@@ -1283,7 +1370,7 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
         List<String> suggestions = new ArrayList<>();
         if (args.length <= 1) {
             String prefix = args.length == 0 ? "" : args[0].toLowerCase();
-            for (String value : new String[]{"online", "list", "players"}) {
+            for (String value : new String[]{"online", "list", "players", "kick", "kickuuid"}) {
                 if (value.startsWith(prefix)) {
                     suggestions.add(value);
                 }
@@ -1298,6 +1385,15 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
             for (Player player : proxy.getAllPlayers()) {
                 if (player.getUsername().toLowerCase().startsWith(prefix)) {
                     suggestions.add(player.getUsername());
+                }
+            }
+        } else if (args.length == 2 && isKickCommand(args)) {
+            String prefix = args[1].toLowerCase();
+            boolean uuidOnly = args[0].equalsIgnoreCase("kickuuid");
+            for (Player player : proxy.getAllPlayers()) {
+                String value = uuidOnly ? player.getUniqueId().toString() : player.getUsername();
+                if (value.toLowerCase().startsWith(prefix)) {
+                    suggestions.add(value);
                 }
             }
         }
@@ -1353,6 +1449,144 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
                 || args[0].equalsIgnoreCase("players");
     }
 
+    private boolean isKickCommand(String[] args) {
+        if (args == null || args.length == 0 || args[0] == null) {
+            return false;
+        }
+        return args[0].equalsIgnoreCase("kick")
+                || args[0].equalsIgnoreCase("kickuuid");
+    }
+
+    private void sendConsoleCommandUsage(CommandSource source) {
+        source.sendMessage(warning("控制台用法: /" + config.commandName()
+                + " online [all|玩家名]"));
+        source.sendMessage(warning("控制台用法: /" + config.commandName()
+                + " kick <玩家名或UUID> [原因]"));
+        source.sendMessage(warning("控制台用法: /" + config.commandName()
+                + " kickuuid <统一UUID> [原因]"));
+    }
+
+    private void kickOnlinePlayer(CommandSource requester, String[] args) {
+        if (args.length < 2 || args[1] == null || args[1].trim().isEmpty()) {
+            sendConsoleCommandUsage(requester);
+            return;
+        }
+
+        Optional<Player> target;
+        if (args[0].equalsIgnoreCase("kickuuid")) {
+            try {
+                target = proxy.getPlayer(UUID.fromString(args[1]));
+            } catch (IllegalArgumentException exception) {
+                requester.sendMessage(error("UUID 格式无效: " + args[1]));
+                return;
+            }
+        } else {
+            target = findOnlinePlayer(args[1]);
+        }
+        if (!target.isPresent()) {
+            requester.sendMessage(warning("未找到代理在线玩家: " + args[1]));
+            return;
+        }
+
+        Player player = target.get();
+        UUID playerUuid = player.getUniqueId();
+        String playerName = player.getUsername();
+        EntryType entryType = getEntryType(playerUuid);
+        String serverName = currentServerName(player);
+        String reason = kickReason(args);
+        long startedAtNanos = System.nanoTime();
+
+        requester.sendMessage(warning("正在临时踢出玩家: " + playerName
+                + " UUID=" + playerUuid + " 类型=" + entryType + " 子服=" + serverName));
+        logger.info("控制台请求临时踢出网易账号会话: player={}, uuid={}, type={}, server={}, reason={}",
+                playerName, playerUuid, entryType, serverName, reason);
+        try {
+            player.disconnect(error(reason));
+        } catch (RuntimeException exception) {
+            requester.sendMessage(error("发送断开请求失败: " + exception.getMessage()));
+            logger.error("Failed to disconnect Netease account session for {} ({})",
+                    exception, playerName, playerUuid);
+            return;
+        }
+
+        scheduleKickVerification(requester, player, startedAtNanos);
+    }
+
+    private static String kickReason(String[] args) {
+        if (args.length <= 2) {
+            return DEFAULT_ADMIN_KICK_REASON;
+        }
+        StringBuilder reason = new StringBuilder();
+        for (int index = 2; index < args.length; index++) {
+            if (args[index] == null || args[index].isEmpty()) {
+                continue;
+            }
+            if (reason.length() > 0) {
+                reason.append(' ');
+            }
+            reason.append(args[index]);
+        }
+        return reason.length() == 0 ? DEFAULT_ADMIN_KICK_REASON : reason.toString();
+    }
+
+    private void scheduleKickVerification(
+            CommandSource requester,
+            Player target,
+            long startedAtNanos) {
+        try {
+            timeoutExecutor.schedule(
+                    () -> verifyPlayerKicked(requester, target, startedAtNanos),
+                    KICK_VERIFICATION_INTERVAL_MILLIS,
+                    TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException exception) {
+            requester.sendMessage(warning("断开请求已发送，但无法启动结果确认任务"));
+            logger.warn("Kick verification scheduler rejected {} ({})",
+                    target.getUsername(), target.getUniqueId());
+        }
+    }
+
+    private void verifyPlayerKicked(
+            CommandSource requester,
+            Player target,
+            long startedAtNanos) {
+        UUID playerUuid = target.getUniqueId();
+        Optional<Player> registered = proxy.getPlayer(playerUuid);
+        boolean targetRemoved = !target.isActive()
+                && (!registered.isPresent() || registered.get() != target);
+        if (targetRemoved) {
+            cleanupDisconnectedSession(target);
+            requester.sendMessage(success("已临时踢出玩家: " + target.getUsername()
+                    + " UUID=" + playerUuid));
+            logger.info("网易账号会话已从代理移除: player={}, uuid={}",
+                    target.getUsername(), playerUuid);
+            return;
+        }
+
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
+        if (elapsedMillis >= Math.max(1_000L, config.takeoverTimeoutMillis())) {
+            requester.sendMessage(error("已发送断开请求，但玩家仍存在于代理列表: "
+                    + target.getUsername() + " UUID=" + playerUuid));
+            logger.warn("Player remained registered after kick request: player={}, uuid={}, elapsed={}ms",
+                    target.getUsername(), playerUuid, elapsedMillis);
+            return;
+        }
+        scheduleKickVerification(requester, target, startedAtNanos);
+    }
+
+    private void cleanupDisconnectedSession(Player target) {
+        UUID playerUuid = target.getUniqueId();
+        AccountSessionRegistry.Session<Player> current = accountSessions.get(playerUuid);
+        if (current != null && current.connection() == target) {
+            if (accountSessions.remove(current)) {
+                clearSessionState(playerUuid);
+            }
+            return;
+        }
+        if (current == null) {
+            clearSessionState(playerUuid);
+        }
+    }
+
     private void showOnlinePlayers(CommandSource requester, String[] args) {
         if (args.length > 2) {
             requester.sendMessage(warning("用法: /" + config.commandName() + " online [all|玩家名]"));
@@ -1377,7 +1611,6 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
         int javaCount = 0;
         int bedrockCount = 0;
         int boundJavaCount = 0;
-        int unresolvedJavaCount = 0;
         int unknownCount = 0;
         for (Player onlinePlayer : sortedPlayers) {
             EntryType entryType = getEntryType(onlinePlayer.getUniqueId());
@@ -1391,9 +1624,6 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
                 case BOUND_JAVA:
                     boundJavaCount++;
                     break;
-                case UNRESOLVED_JAVA:
-                    unresolvedJavaCount++;
-                    break;
                 default:
                     unknownCount++;
                     break;
@@ -1404,7 +1634,6 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
                 + " Java=" + javaCount
                 + " 基岩=" + bedrockCount
                 + " Java继承=" + boundJavaCount
-                + " 待基岩首次进入Java=" + unresolvedJavaCount
                 + " 未知=" + unknownCount));
 
         if (sortedPlayers.isEmpty()) {
@@ -1434,8 +1663,7 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
             if (entryType == EntryType.BEDROCK) {
                 bedrockPlayers.add(onlinePlayer.getUsername());
             } else if (entryType == EntryType.JAVA
-                    || entryType == EntryType.BOUND_JAVA
-                    || entryType == EntryType.UNRESOLVED_JAVA) {
+                    || entryType == EntryType.BOUND_JAVA) {
                 javaPlayers.add(onlinePlayer.getUsername());
             } else {
                 unknownPlayers.add(onlinePlayer.getUsername());
@@ -1464,6 +1692,14 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
         Optional<Player> direct = proxy.getPlayer(query);
         if (direct.isPresent()) {
             return direct;
+        }
+        try {
+            Optional<Player> byUuid = proxy.getPlayer(UUID.fromString(query));
+            if (byUuid.isPresent()) {
+                return byUuid;
+            }
+        } catch (IllegalArgumentException ignored) {
+            // The query is a player name rather than a UUID.
         }
         for (Player onlinePlayer : proxy.getAllPlayers()) {
             if (onlinePlayer.getUsername().equalsIgnoreCase(query)) {
@@ -1540,12 +1776,6 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
             return;
         }
 
-        if (entryType == EntryType.UNRESOLVED_JAVA) {
-            player.sendMessage(warning("尚未找到同网易账号的基岩档案"));
-            player.sendMessage(warning("请先使用同一网易账号的基岩版进入本服一次，然后重新使用 Java 版进入"));
-            return;
-        }
-
         player.sendMessage(warning("当前是普通 Java 身份，未触发网易账号自动继承"));
     }
 
@@ -1566,8 +1796,6 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
                 return "基岩";
             case BOUND_JAVA:
                 return "Java继承基岩档案";
-            case UNRESOLVED_JAVA:
-                return "待基岩首次进入Java";
             default:
                 return "未知";
         }
@@ -1578,8 +1806,7 @@ public final class NeteaseAccountVelocityService implements NeteaseAccountApi, S
             return "BEDROCK";
         }
         if (entryType == EntryType.JAVA
-                || entryType == EntryType.BOUND_JAVA
-                || entryType == EntryType.UNRESOLVED_JAVA) {
+                || entryType == EntryType.BOUND_JAVA) {
             return "JAVA";
         }
         return "UNKNOWN";
