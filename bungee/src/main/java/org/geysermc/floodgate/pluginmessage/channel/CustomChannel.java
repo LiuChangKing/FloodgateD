@@ -27,9 +27,9 @@ package org.geysermc.floodgate.pluginmessage.channel;
 
 import com.google.common.io.ByteArrayDataInput;
 import com.google.common.io.ByteStreams;
-import java.util.UUID;
 import net.md_5.bungee.BungeeCord;
 import org.geysermc.floodgate.api.events.ClientPlayerInitializedEvent;
+import org.geysermc.floodgate.api.player.FloodgatePlayer;
 import org.geysermc.floodgate.pluginmessage.PluginMessageChannel;
 import org.geysermc.floodgate.pluginmessage.PluginMessageChannel.Identity;
 import org.geysermc.floodgate.pluginmessage.PluginMessageChannel.Result;
@@ -41,8 +41,11 @@ public class CustomChannel implements PluginMessageChannel {
     }
 
     @Override
-    public Result handleProxyCall(byte[] data, UUID sourceUuid, String sourceUsername,
-                                  Identity sourceIdentity) {
+    public Result handleProxyCall(
+            byte[] data,
+            FloodgatePlayer source,
+            Identity sourceIdentity
+    ) {
         ByteArrayDataInput in = ByteStreams.newDataInput(data);
         int packetId = in.readInt();
         String packetType = in.readUTF();
@@ -50,7 +53,7 @@ public class CustomChannel implements PluginMessageChannel {
         if (packetId == 113) {
             long runtimeId = in.readLong();
             ClientPlayerInitializedEvent clientPlayerInitializedEvent = new ClientPlayerInitializedEvent(
-                    sourceUuid, runtimeId);
+                    source.getCorrectUniqueId(), runtimeId);
             BungeeCord.getInstance().getPluginManager().callEvent(clientPlayerInitializedEvent);
         }
 
@@ -66,7 +69,7 @@ public class CustomChannel implements PluginMessageChannel {
     }
 
     @Override
-    public Result handleServerCall(byte[] data, UUID targetUuid, String targetUsername) {
+    public Result handleServerCall(byte[] data, FloodgatePlayer source) {
         return null;
     }
 

@@ -49,9 +49,10 @@ import org.geysermc.floodgate.api.ProxyFloodgateApi;
 import org.geysermc.floodgate.api.logger.FloodgateLogger;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
 import org.geysermc.floodgate.config.ProxyFloodgateConfig;
+import org.geysermc.floodgate.pluginmessage.channel.FormChannel;
 import org.geysermc.floodgate.skin.SkinApplier;
-import org.geysermc.floodgate.util.BungeeRenameUtil;
 import org.geysermc.floodgate.skin.SkinDataImpl;
+import org.geysermc.floodgate.util.BungeeRenameUtil;
 import org.geysermc.floodgate.util.LanguageManager;
 import org.geysermc.floodgate.util.MojangUtils;
 import org.geysermc.floodgate.util.ReflectionUtils;
@@ -86,6 +87,7 @@ public final class BungeeListener implements Listener {
     private AttributeKey<String> kickMessageAttribute;
 
     @Inject private MojangUtils mojangUtils;
+    @Inject private FormChannel formChannel;
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onLoginEvent(LoginEvent event) {
@@ -164,7 +166,7 @@ public final class BungeeListener implements Listener {
 
         // Skin look up (on Spigot and friends) would result in it failing, so apply a default skin
         if (!player.isLinked()) {
-            skinApplier.applySkin(player, SkinDataImpl.DEFAULT_SKIN);
+            skinApplier.applySkin(player, SkinDataImpl.DEFAULT_SKIN, true);
             return;
         }
 
@@ -173,19 +175,24 @@ public final class BungeeListener implements Listener {
 
         event.registerIntent(plugin);
 
-        mojangUtils.skinFor(player.getJavaUniqueId())
+        mojangUtils.skinFor(player.getCorrectUniqueId())
                 .exceptionally(exception -> {
-                    logger.debug("Unexpected skin fetch error for " + player.getJavaUniqueId(), exception);
+                    logger.debug("Unexpected skin fetch error for " + player.getCorrectUniqueId(), exception);
                     return SkinDataImpl.DEFAULT_SKIN;
                 })
                 .thenAccept(skin -> {
-                    skinApplier.applySkin(player, skin);
+                    skinApplier.applySkin(player, skin, true);
                     event.completeIntent(plugin);
                 });
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPlayerDisconnect(PlayerDisconnectEvent event) {
+        FloodgatePlayer player = api.getPendingRemovePlayer(event.getPlayer().getUniqueId());
+        if (player != null) {
+            formChannel.disconnect(player);
+        }
+
         api.playerRemoved(event.getPlayer().getUniqueId());
     }
 }

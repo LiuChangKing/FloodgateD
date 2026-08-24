@@ -25,9 +25,7 @@
 
 package org.geysermc.floodgate.pluginmessage.channel;
 
-import com.google.common.io.ByteArrayDataInput;
-import com.google.common.io.ByteStreams;
-import java.util.UUID;
+import org.geysermc.floodgate.api.player.FloodgatePlayer;
 import org.geysermc.floodgate.pluginmessage.PluginMessageChannel;
 
 public class CustomChannel implements PluginMessageChannel {
@@ -37,8 +35,11 @@ public class CustomChannel implements PluginMessageChannel {
     }
 
     @Override
-    public Result handleProxyCall(byte[] data, UUID sourceUuid, String sourceUsername,
-                                  Identity sourceIdentity) {
+    public Result handleProxyCall(
+            byte[] data,
+            FloodgatePlayer source,
+            Identity sourceIdentity
+    ) {
 
         if (sourceIdentity == Identity.SERVER) {
             // send it to the client
@@ -55,7 +56,7 @@ public class CustomChannel implements PluginMessageChannel {
     }
 
     @Override
-    public Result handleServerCall(byte[] data, UUID targetUuid, String targetUsername) {
+    public Result handleServerCall(byte[] data, FloodgatePlayer source) {
         // TODO
         return null;
     }
