@@ -310,12 +310,15 @@ public final class NeteaseAccountSpigotBridge implements Listener, PluginMessage
     @EventHandler
     public void onPlayerJoin(PlayerJoinEvent event) {
         UUID playerUuid = event.getPlayer().getUniqueId();
+        requestNeteaseAccountState(event.getPlayer());
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
             Player onlinePlayer = plugin.getServer().getPlayer(playerUuid);
             if (onlinePlayer == null || !onlinePlayer.isOnline()) {
                 return;
             }
-            requestNeteaseAccountState(onlinePlayer);
+            if (getConfirmedEntryType(onlinePlayer) == EntryType.UNKNOWN) {
+                requestNeteaseAccountState(onlinePlayer);
+            }
             logPlayerPlatform(onlinePlayer);
         }, 20L);
     }
@@ -347,7 +350,11 @@ public final class NeteaseAccountSpigotBridge implements Listener, PluginMessage
                 .append(" FloodgateApi=").append(apiAvailable)
                 .append(" isFloodgatePlayer=").append(floodgatePlayerFlag)
                 .append(" isFloodgateId=").append(floodgateId)
-                .append(" FloodgatePlayer=").append(floodgatePlayer != null);
+                .append(" FloodgatePlayer=").append(floodgatePlayer != null)
+                .append(" BackendMode=")
+                .append(floodgatePlayer != null
+                        ? "FULL_PLAYER_DATA"
+                        : entryType == EntryType.BEDROCK ? "UUID_CONTEXT" : "NONE");
 
         if (floodgatePlayer != null) {
             message.append(" DeviceOs=").append(floodgatePlayer.getDeviceOs())
@@ -381,6 +388,20 @@ public final class NeteaseAccountSpigotBridge implements Listener, PluginMessage
             return entryType;
         }
         return legacyEntryType;
+    }
+
+    public EntryType getConfirmedEntryType(Player player) {
+        if (player == null) {
+            return EntryType.UNKNOWN;
+        }
+        UUID playerUuid = player.getUniqueId();
+        ForwardedProfileMarker marker = readForwardedProfileMarker(player);
+        if (marker != null) {
+            updateFromForwardedProfile(
+                    playerUuid, marker.entryType, marker.javaUuid, marker.javaUid, marker.bedrockUid);
+        }
+        EntryType entryType = entryTypes.get(playerUuid);
+        return entryType == null ? EntryType.UNKNOWN : entryType;
     }
 
     @Override

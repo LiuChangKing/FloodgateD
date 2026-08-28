@@ -28,6 +28,7 @@ package org.geysermc.floodgate.pluginmessage.channel;
 import com.google.common.io.ByteArrayDataInput;
 import com.google.common.io.ByteStreams;
 import com.google.inject.Inject;
+import java.util.UUID;
 import org.bukkit.Bukkit;
 import org.geysermc.floodgate.api.events.ClientPlayerInitializedEvent;
 import org.geysermc.floodgate.api.logger.FloodgateLogger;
@@ -53,6 +54,24 @@ public class CustomChannel implements PluginMessageChannel {
 
     @Override
     public Result handleServerCall(byte[] data, FloodgatePlayer source) {
+        return handleServerCall(data, source.getCorrectUniqueId());
+    }
+
+    @Override
+    public boolean supportsServerCallWithoutPlayer() {
+        return true;
+    }
+
+    @Override
+    public Result handleServerCallWithoutPlayer(
+            byte[] data,
+            UUID sourceUuid,
+            String sourceUsername
+    ) {
+        return handleServerCall(data, sourceUuid);
+    }
+
+    private Result handleServerCall(byte[] data, UUID sourceUuid) {
         ByteArrayDataInput in = ByteStreams.newDataInput(data);
         int packetId = in.readInt();
         String packetType = in.readUTF();
@@ -62,7 +81,7 @@ public class CustomChannel implements PluginMessageChannel {
         if (packetId == 113) {
             long runtimeId = in.readLong();
             ClientPlayerInitializedEvent clientPlayerInitializedEvent = new ClientPlayerInitializedEvent(
-                    source.getCorrectUniqueId(), runtimeId);
+                    sourceUuid, runtimeId);
             Bukkit.getServer().getPluginManager().callEvent(clientPlayerInitializedEvent);
         }
         return Result.handled();

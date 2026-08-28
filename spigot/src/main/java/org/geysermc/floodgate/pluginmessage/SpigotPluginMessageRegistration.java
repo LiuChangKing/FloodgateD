@@ -25,15 +25,22 @@
 
 package org.geysermc.floodgate.pluginmessage;
 
+import java.util.Arrays;
 import lombok.RequiredArgsConstructor;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.messaging.Messenger;
+import org.geysermc.floodgate.SpigotPlugin;
 import org.geysermc.floodgate.api.FloodgateApi;
+import org.geysermc.floodgate.api.netease.EntryType;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
+import org.geysermc.floodgate.neteaseaccount.NeteaseAccountSpigotBridge;
 import org.geysermc.floodgate.pluginmessage.PluginMessageChannel.Result;
 
 @RequiredArgsConstructor
 public class SpigotPluginMessageRegistration implements PluginMessageRegistration {
+    private static final int ENTRY_TYPE_LOOKUP_RETRIES = 40;
+
     private final JavaPlugin plugin;
     private final FloodgateApi api;
 
@@ -44,19 +51,63 @@ public class SpigotPluginMessageRegistration implements PluginMessageRegistratio
         messenger.registerIncomingPluginChannel(
                 plugin,
                 channel.getIdentifier(),
-                (channel1, player, message) -> {
-                    FloodgatePlayer fPlayer = api.getPlayer(player.getUniqueId());
-                    if (fPlayer == null) {
-                        player.kickPlayer("Only Floodgate players can send floodgate messages!");
-                        return;
-                    }
-
-                    Result result = channel.handleServerCall(message, fPlayer);
-                    if (!result.isAllowed() && result.getReason() != null) {
-                        player.kickPlayer(result.getReason());
-                    }
-                });
+                (channel1, player, message) -> handleIncomingMessage(
+                        channel,
+                        player,
+                        Arrays.copyOf(message, message.length),
+                        ENTRY_TYPE_LOOKUP_RETRIES));
 
         messenger.registerOutgoingPluginChannel(plugin, channel.getIdentifier());
+    }
+
+    private void handleIncomingMessage(
+            PluginMessageChannel channel,
+            Player player,
+            byte[] message,
+            int retriesRemaining
+    ) {
+        if (!player.isOnline()) {
+            return;
+        }
+
+        FloodgatePlayer floodgatePlayer = api.getPlayer(player.getUniqueId());
+        Result result;
+        if (floodgatePlayer == null) {
+            EntryType entryType = getConfirmedEntryType(player);
+            if (entryType != EntryType.BEDROCK) {
+                if (entryType == EntryType.UNKNOWN && api.isFloodgatePlayer(player.getUniqueId())) {
+                    if (retriesRemaining > 0) {
+                        plugin.getServer().getScheduler().runTaskLater(
+                                plugin,
+                                () -> handleIncomingMessage(
+                                        channel, player, message, retriesRemaining - 1),
+                                1L);
+                    }
+                    return;
+                }
+                player.kickPlayer("Only Floodgate players can send floodgate messages!");
+                return;
+            }
+
+            if (!channel.supportsServerCallWithoutPlayer()) {
+                return;
+            }
+            result = channel.handleServerCallWithoutPlayer(
+                    message, player.getUniqueId(), player.getName());
+        } else {
+            result = channel.handleServerCall(message, floodgatePlayer);
+        }
+
+        if (!result.isAllowed() && result.getReason() != null) {
+            player.kickPlayer(result.getReason());
+        }
+    }
+
+    private EntryType getConfirmedEntryType(Player player) {
+        if (!(plugin instanceof SpigotPlugin)) {
+            return EntryType.UNKNOWN;
+        }
+        NeteaseAccountSpigotBridge bridge = ((SpigotPlugin) plugin).getNeteaseAccountBridge();
+        return bridge == null ? EntryType.UNKNOWN : bridge.getConfirmedEntryType(player);
     }
 }

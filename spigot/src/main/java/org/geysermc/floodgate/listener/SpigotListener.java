@@ -80,11 +80,13 @@ public final class SpigotListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPlayerQuit(PlayerQuitEvent event) {
-        FloodgatePlayer player = api.getPendingRemovePlayer(event.getPlayer().getUniqueId());
+        UUID uniqueId = event.getPlayer().getUniqueId();
+        FloodgatePlayer player = api.getPendingRemovePlayer(uniqueId);
         if (player != null) {
             formChannel.disconnect(player);
         }
+        formChannel.disconnect(uniqueId);
 
-        api.playerRemoved(event.getPlayer().getUniqueId());
+        api.playerRemoved(uniqueId);
     }
 }

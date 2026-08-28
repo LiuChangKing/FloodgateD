@@ -25,6 +25,7 @@
 
 package org.geysermc.floodgate.pluginmessage;
 
+import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +42,25 @@ public interface PluginMessageChannel {
     );
 
     Result handleServerCall(byte[] data, FloodgatePlayer source);
+
+    /**
+     * Returns whether this channel can safely handle a server call without the full player data
+     * normally forwarded by a proxy Floodgate instance.
+     */
+    default boolean supportsServerCallWithoutPlayer() {
+        return false;
+    }
+
+    /**
+     * Handles a trusted Bedrock call using only the Bukkit identity available on the backend.
+     */
+    default Result handleServerCallWithoutPlayer(
+            byte[] data,
+            UUID sourceUuid,
+            String sourceUsername
+    ) {
+        return Result.handled();
+    }
 
     @Getter
     @RequiredArgsConstructor(access = AccessLevel.PRIVATE)

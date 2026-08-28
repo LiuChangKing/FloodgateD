@@ -62,6 +62,20 @@ public class NeteaseCustomChannel implements PluginMessageChannel {
         return Result.handled();
     }
 
+    @Override
+    public boolean supportsServerCallWithoutPlayer() {
+        return true;
+    }
+
+    @Override
+    public Result handleServerCallWithoutPlayer(
+            byte[] data,
+            UUID sourceUuid,
+            String sourceUsername
+    ) {
+        return Result.handled();
+    }
+
 
     public boolean sendPacket(UUID player, byte[] packet, UnsafeFloodgateApi api) {
         if (api == null) {
