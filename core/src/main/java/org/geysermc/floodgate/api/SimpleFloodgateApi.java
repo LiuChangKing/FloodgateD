@@ -40,6 +40,8 @@ import java.util.concurrent.TimeUnit;
 import org.geysermc.cumulus.form.Form;
 import org.geysermc.cumulus.form.util.FormBuilder;
 import org.geysermc.floodgate.api.logger.FloodgateLogger;
+import org.geysermc.floodgate.api.netease.EntryType;
+import org.geysermc.floodgate.api.netease.NeteaseAccountBridge;
 import org.geysermc.floodgate.api.player.FloodgatePlayer;
 import org.geysermc.floodgate.api.unsafe.Unsafe;
 import org.geysermc.floodgate.config.FloodgateConfig;
@@ -79,6 +81,15 @@ public class SimpleFloodgateApi implements FloodgateApi {
 
     @Override
     public boolean isFloodgatePlayer(UUID uuid) {
+        EntryType entryType = NeteaseAccountBridge.getInstance().getEntryType(uuid);
+        if (entryType == EntryType.BEDROCK) {
+            return true;
+        }
+        if (entryType == EntryType.JAVA
+                || entryType == EntryType.BOUND_JAVA
+                || entryType == EntryType.UNRESOLVED_JAVA) {
+            return false;
+        }
         return getPlayer(uuid) != null || uuid.toString().contains("00000000-0000-4000-8000");
     }
 
